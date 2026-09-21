@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: meu-dinheiro-no-controle
+    runtime: node
+    plan: free
+    buildCommand: npm install --global pnpm@10.4.1 && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
