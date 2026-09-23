@@ -92,6 +92,7 @@ export const api = {
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   changePassword: (body: { currentPassword: string; newPassword: string }) => request<void>("/auth/change-password", { method: "POST", body: JSON.stringify(body) }),
   exportData: () => fetch("/api/export", { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("Não foi possível exportar seus dados."); return response.blob(); }),
+  importCsv: (csv: string) => request<{ imported: number }>("/import/csv", { method: "POST", body: JSON.stringify({ csv }) }),
   dashboard: () => request<Dashboard>("/dashboard"),
   profile: () => request<{ profile: FinancialProfile }>("/profile"),
   saveProfile: (body: FinancialProfile) => request<{ profile: FinancialProfile }>("/profile", { method: "PUT", body: JSON.stringify(body) }),

@@ -5,6 +5,7 @@ import { createSession, destroySession, getUserFromRequest, hashPassword, requir
 import { getDb, withTransaction } from "./db";
 import { buildDashboard, buildSimulation, buildSimulationScenarios, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
+import { parseLaunchCsv } from "./csv";
 
 const router = Router();
 
@@ -535,6 +536,20 @@ router.get("/export", requireAuth, asyncRoute(async (request, response) => {
   ]);
   response.setHeader("Content-Disposition", `attachment; filename=meu-dinheiro-no-controle-${todayIso()}.json`);
   response.json({ exportedAt: new Date().toISOString(), profile, launches: launches.rows.map(serializeLaunch), recurring: recurring.rows.map(serializeRecurring), purchases: purchases.rows.map(serializePurchase), debts: debts.rows.map(serializeDebt), goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+}));
+
+router.post("/import/csv", requireAuth, asyncRoute(async (request, response) => {
+  if (typeof request.body?.csv !== "string" || request.body.csv.length > 100_000) { response.status(400).json({ message: "Envie um CSV de até 100 KB." }); return; }
+  let rows;
+  try { rows = parseLaunchCsv(request.body.csv); } catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "CSV inválido." }); return; }
+  if (rows.some((row) => !validDate(row.dueDate))) { response.status(400).json({ message: "Existe uma data inválida no CSV." }); return; }
+  await withTransaction(async (client) => {
+    for (const row of rows) {
+      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, status, paid_at, category) VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 = 'paid' THEN NOW() ELSE NULL END, $8)", [randomUUID(), request.user!.id, row.type, row.name, cents(row.amount), row.dueDate, row.status, row.category]);
+    }
+  });
+  await recordAudit(request.user!.id, request.user!.id, "launches_imported_csv", { count: rows.length });
+  response.status(201).json({ imported: rows.length });
 }));
 
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
