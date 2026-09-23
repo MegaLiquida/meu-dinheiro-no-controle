@@ -70,6 +70,97 @@ const migrations = [
       );
     `,
   },
+  {
+    name: "003_financial_planning_entities",
+    sql: `
+      CREATE TABLE IF NOT EXISTS recurring_commitments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('entrada', 'conta')),
+        name TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+        due_day INTEGER NOT NULL CHECK (due_day BETWEEN 1 AND 31),
+        start_date DATE NOT NULL,
+        category TEXT,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS recurring_id TEXT REFERENCES recurring_commitments(id) ON DELETE SET NULL;
+
+      CREATE TABLE IF NOT EXISTS purchases (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+        installment_count INTEGER NOT NULL CHECK (installment_count BETWEEN 1 AND 600),
+        first_due_date DATE NOT NULL,
+        category TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS purchase_installments (
+        id TEXT PRIMARY KEY,
+        purchase_id TEXT NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        installment_number INTEGER NOT NULL CHECK (installment_number > 0),
+        amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+        due_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+        paid_at TIMESTAMPTZ,
+        UNIQUE (purchase_id, installment_number)
+      );
+
+      ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS purchase_installment_id TEXT REFERENCES purchase_installments(id) ON DELETE SET NULL;
+
+      CREATE TABLE IF NOT EXISTS debts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        creditor TEXT,
+        balance_cents INTEGER NOT NULL CHECK (balance_cents >= 0),
+        installment_cents INTEGER NOT NULL DEFAULT 0 CHECK (installment_cents >= 0),
+        due_day INTEGER CHECK (due_day IS NULL OR due_day BETWEEN 1 AND 31),
+        interest_rate NUMERIC(8, 4),
+        priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('essential', 'high', 'normal', 'low')),
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'negotiating', 'paid')),
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS budget_limits (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category TEXT NOT NULL,
+        month TEXT NOT NULL CHECK (month ~ '^[0-9]{4}-[0-9]{2}$'),
+        limit_cents INTEGER NOT NULL CHECK (limit_cents >= 0),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, category, month)
+      );
+
+      CREATE TABLE IF NOT EXISTS financial_goals (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        target_cents INTEGER NOT NULL CHECK (target_cents > 0),
+        current_cents INTEGER NOT NULL DEFAULT 0 CHECK (current_cents >= 0),
+        due_date DATE,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'paused')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS recurring_user_active_idx ON recurring_commitments(user_id, active);
+      CREATE INDEX IF NOT EXISTS purchases_user_idx ON purchases(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS installments_user_due_idx ON purchase_installments(user_id, due_date);
+      CREATE INDEX IF NOT EXISTS debts_user_status_idx ON debts(user_id, status);
+      CREATE INDEX IF NOT EXISTS budgets_user_month_idx ON budget_limits(user_id, month);
+      CREATE INDEX IF NOT EXISTS goals_user_status_idx ON financial_goals(user_id, status);
+    `,
+  },
 ];
 
 export async function runMigrations(pool: Pool) {

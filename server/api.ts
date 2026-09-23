@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
 import { buildDashboard, buildSimulation, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
+import { addMonthsKeepingDay, splitCents } from "./planning";
 
 const router = Router();
 
@@ -24,6 +25,32 @@ const profileSchema = z.object({
   currentBalance: z.coerce.number().finite().min(-100_000_000).max(100_000_000),
   balanceAsOfDate: dateSchema,
   safetyMargin: z.coerce.number().finite().nonnegative().max(100_000_000),
+});
+const recurringSchema = z.object({
+  kind: z.enum(["entrada", "conta"]),
+  name: z.string().trim().min(2).max(120),
+  amount: z.coerce.number().finite().nonnegative().max(100_000_000),
+  dueDay: z.coerce.number().int().min(1).max(31),
+  startDate: dateSchema,
+  category: z.string().trim().max(60).optional().nullable(),
+});
+const purchaseSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  totalAmount: z.coerce.number().finite().positive().max(100_000_000),
+  installmentCount: z.coerce.number().int().positive().max(600),
+  firstDueDate: dateSchema,
+  category: z.string().trim().max(60).optional().nullable(),
+});
+const debtSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  creditor: z.string().trim().max(120).optional().nullable(),
+  balance: z.coerce.number().finite().nonnegative().max(100_000_000),
+  installment: z.coerce.number().finite().nonnegative().max(100_000_000).default(0),
+  dueDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
+  interestRate: z.coerce.number().finite().nonnegative().max(100_000).optional().nullable(),
+  priority: z.enum(["essential", "high", "normal", "low"]).default("normal"),
+  status: z.enum(["open", "negotiating", "paid"]).default("open"),
+  notes: z.string().trim().max(1000).optional().nullable(),
 });
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
@@ -64,7 +91,7 @@ function serializeUser(row: { id: string; name: string; email: string; role: str
   };
 }
 
-function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; amount_cents: number; due_date: string | Date; status: Launch["status"]; installments_remaining?: number | null; paid_at?: Date | string | null }): Launch {
+function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; amount_cents: number; due_date: string | Date; status: Launch["status"]; installments_remaining?: number | null; paid_at?: Date | string | null; recurring_id?: string | null; purchase_installment_id?: string | null }): Launch {
   return {
     id: row.id,
     type: row.type,
@@ -74,6 +101,8 @@ function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; 
     status: row.status,
     installmentsRemaining: row.installments_remaining ?? undefined,
     paidAt: row.paid_at ? typeof row.paid_at === "string" ? row.paid_at : row.paid_at.toISOString() : null,
+    recurringId: row.recurring_id ?? null,
+    purchaseInstallmentId: row.purchase_installment_id ?? null,
   };
 }
 
@@ -114,7 +143,7 @@ function fallbackProfile(launches: Launch[]): FinancialProfile {
 
 function getLaunches(userId: string) {
   return getDb().query(
-    `SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at
+    `SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id
        FROM financial_launches
       WHERE user_id = $1
       ORDER BY due_date ASC, created_at ASC`,
@@ -128,6 +157,38 @@ async function recordAudit(actorUserId: string | null, targetUserId: string | nu
      VALUES ($1, $2, $3, $4, $5::jsonb)`,
     [randomUUID(), actorUserId, targetUserId, action, JSON.stringify(metadata)],
   );
+}
+
+async function generateRecurringLaunches(userId: string, recurringId: string) {
+  const source = await getDb().query("SELECT kind, name, amount_cents, due_day, start_date FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
+  if (!source.rowCount) return;
+  const row = source.rows[0];
+  const today = todayIso();
+  let firstDue = addMonthsKeepingDay(typeof row.start_date === "string" ? row.start_date.slice(0, 10) : row.start_date.toISOString().slice(0, 10), 0, Number(row.due_day));
+  while (firstDue < today) firstDue = addMonthsKeepingDay(firstDue, 1, Number(row.due_day));
+  for (let index = 0; index < 24; index += 1) {
+    const dueDate = addMonthsKeepingDay(firstDue, index, Number(row.due_day));
+    await getDb().query(
+      `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, recurring_id)
+       SELECT $1, $2, $3, $4, $5, $6, $7
+       WHERE NOT EXISTS (SELECT 1 FROM financial_launches WHERE recurring_id = $7 AND due_date = $6)`,
+      [randomUUID(), userId, row.kind === "entrada" ? "entrada" : "conta", row.name, row.amount_cents, dueDate, recurringId],
+    );
+  }
+}
+
+function serializeRecurring(row: Record<string, unknown>) {
+  const date = row.start_date as string | Date;
+  return { id: row.id, kind: row.kind, name: row.name, amount: money(Number(row.amount_cents)), dueDay: Number(row.due_day), startDate: typeof date === "string" ? date.slice(0, 10) : date.toISOString().slice(0, 10), category: row.category ?? null, active: row.active };
+}
+
+function serializePurchase(row: Record<string, unknown>) {
+  const date = row.first_due_date as string | Date;
+  return { id: row.id, name: row.name, totalAmount: money(Number(row.total_cents)), installmentCount: Number(row.installment_count), firstDueDate: typeof date === "string" ? date.slice(0, 10) : date.toISOString().slice(0, 10), category: row.category ?? null, createdAt: row.created_at };
+}
+
+function serializeDebt(row: Record<string, unknown>) {
+  return { id: row.id, name: row.name, creditor: row.creditor ?? null, balance: money(Number(row.balance_cents)), installment: money(Number(row.installment_cents)), dueDay: row.due_day == null ? null : Number(row.due_day), interestRate: row.interest_rate == null ? null : Number(row.interest_rate), priority: row.priority, status: row.status, notes: row.notes ?? null, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
 router.get("/health", asyncRoute(async (_request, response) => {
@@ -238,6 +299,123 @@ router.put("/profile", requireAuth, asyncRoute(async (request, response) => {
   response.json({ profile: serializeProfile(result.rows[0]) });
 }));
 
+router.get("/recurring", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("SELECT id, kind, name, amount_cents, due_day, start_date, category, active FROM recurring_commitments WHERE user_id = $1 ORDER BY active DESC, due_day ASC, name ASC", [request.user!.id]);
+  response.json({ recurring: result.rows.map(serializeRecurring) });
+}));
+
+router.post("/recurring", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = recurringSchema.safeParse(request.body);
+  if (!parsed.success || !validDate(parsed.data.startDate)) {
+    response.status(400).json({ message: "Confira tipo, nome, valor, dia e data de início." });
+    return;
+  }
+  const data = parsed.data;
+  const recurringId = randomUUID();
+  const result = await getDb().query(
+    `INSERT INTO recurring_commitments (id, user_id, kind, name, amount_cents, due_day, start_date, category)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, kind, name, amount_cents, due_day, start_date, category, active`,
+    [recurringId, request.user!.id, data.kind, data.name, cents(data.amount), data.dueDay, data.startDate, data.category ?? null],
+  );
+  await generateRecurringLaunches(request.user!.id, recurringId);
+  await recordAudit(request.user!.id, request.user!.id, "recurring_commitment_created", { recurringId });
+  response.status(201).json({ recurring: serializeRecurring(result.rows[0]) });
+}));
+
+router.patch("/recurring/:id", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = z.object({ active: z.boolean() }).safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Informe um estado válido para o compromisso." });
+    return;
+  }
+  const result = await getDb().query("UPDATE recurring_commitments SET active = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, kind, name, amount_cents, due_day, start_date, category, active", [request.params.id, request.user!.id, parsed.data.active]);
+  if (!result.rowCount) {
+    response.status(404).json({ message: "Compromisso recorrente não encontrado." });
+    return;
+  }
+  if (parsed.data.active) await generateRecurringLaunches(request.user!.id, request.params.id);
+  response.json({ recurring: serializeRecurring(result.rows[0]) });
+}));
+
+router.get("/purchases", requireAuth, asyncRoute(async (request, response) => {
+  const purchases = await getDb().query("SELECT id, name, total_cents, installment_count, first_due_date, category, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at DESC", [request.user!.id]);
+  const installments = await getDb().query("SELECT id, purchase_id, installment_number, amount_cents, due_date, status, paid_at FROM purchase_installments WHERE user_id = $1 ORDER BY due_date ASC", [request.user!.id]);
+  response.json({ purchases: purchases.rows.map((row) => ({ ...serializePurchase(row), installments: installments.rows.filter((item) => item.purchase_id === row.id).map((item) => ({ id: item.id, installmentNumber: Number(item.installment_number), amount: money(Number(item.amount_cents)), dueDate: typeof item.due_date === "string" ? item.due_date.slice(0, 10) : item.due_date.toISOString().slice(0, 10), status: item.status, paidAt: item.paid_at })) })) });
+}));
+
+router.post("/purchases", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = purchaseSchema.safeParse(request.body);
+  if (!parsed.success || !validDate(parsed.data.firstDueDate)) {
+    response.status(400).json({ message: "Confira nome, valor total, parcelas e data da primeira cobrança." });
+    return;
+  }
+  const data = parsed.data;
+  const purchaseId = randomUUID();
+  const installmentAmounts = splitCents(cents(data.totalAmount), data.installmentCount);
+  await withTransaction(async (client) => {
+    await client.query("INSERT INTO purchases (id, user_id, name, total_cents, installment_count, first_due_date, category) VALUES ($1, $2, $3, $4, $5, $6, $7)", [purchaseId, request.user!.id, data.name, cents(data.totalAmount), data.installmentCount, data.firstDueDate, data.category ?? null]);
+    for (let index = 0; index < data.installmentCount; index += 1) {
+      const installmentId = randomUUID();
+      const dueDate = addMonthsKeepingDay(data.firstDueDate, index);
+      await client.query("INSERT INTO purchase_installments (id, purchase_id, user_id, installment_number, amount_cents, due_date) VALUES ($1, $2, $3, $4, $5, $6)", [installmentId, purchaseId, request.user!.id, index + 1, installmentAmounts[index], dueDate]);
+      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining, purchase_installment_id) VALUES ($1, $2, 'parcela', $3, $4, $5, $6, $7)", [randomUUID(), request.user!.id, `${data.name} · parcela ${index + 1}/${data.installmentCount}`, installmentAmounts[index], dueDate, data.installmentCount - index, installmentId]);
+    }
+  });
+  await recordAudit(request.user!.id, request.user!.id, "purchase_created", { purchaseId, installmentCount: data.installmentCount });
+  response.status(201).json({ purchaseId });
+}));
+
+router.patch("/purchase-installments/:id", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = z.object({ status: z.enum(["pending", "paid"]) }).safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Status de parcela inválido." });
+    return;
+  }
+  const result = await withTransaction(async (client) => {
+    const installment = await client.query("UPDATE purchase_installments SET status = $3, paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) ELSE NULL END WHERE id = $1 AND user_id = $2 RETURNING id, status", [request.params.id, request.user!.id, parsed.data.status]);
+    if (!installment.rowCount) return null;
+    await client.query("UPDATE financial_launches SET status = $3, paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) ELSE NULL END, updated_at = NOW() WHERE purchase_installment_id = $1 AND user_id = $2", [request.params.id, request.user!.id, parsed.data.status]);
+    return installment.rows[0];
+  });
+  if (!result) {
+    response.status(404).json({ message: "Parcela não encontrada." });
+    return;
+  }
+  response.json({ installment: result });
+}));
+
+router.get("/debts", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY CASE priority WHEN 'essential' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, balance_cents DESC", [request.user!.id]);
+  response.json({ debts: result.rows.map(serializeDebt) });
+}));
+
+router.post("/debts", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = debtSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Confira os dados da dívida." });
+    return;
+  }
+  const data = parsed.data;
+  const result = await getDb().query("INSERT INTO debts (id, user_id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at", [randomUUID(), request.user!.id, data.name, data.creditor ?? null, cents(data.balance), cents(data.installment), data.dueDay ?? null, data.interestRate ?? null, data.priority, data.status, data.notes ?? null]);
+  response.status(201).json({ debt: serializeDebt(result.rows[0]) });
+}));
+
+router.patch("/debts/:id", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = debtSchema.partial().safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Dados de atualização da dívida inválidos." });
+    return;
+  }
+  const data = parsed.data;
+  const result = await getDb().query("UPDATE debts SET name = COALESCE($3, name), creditor = COALESCE($4, creditor), balance_cents = COALESCE($5, balance_cents), installment_cents = COALESCE($6, installment_cents), due_day = COALESCE($7, due_day), interest_rate = COALESCE($8, interest_rate), priority = COALESCE($9, priority), status = COALESCE($10, status), notes = COALESCE($11, notes), updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at", [request.params.id, request.user!.id, data.name ?? null, data.creditor ?? null, data.balance === undefined ? null : cents(data.balance), data.installment === undefined ? null : cents(data.installment), data.dueDay ?? null, data.interestRate ?? null, data.priority ?? null, data.status ?? null, data.notes ?? null]);
+  if (!result.rowCount) {
+    response.status(404).json({ message: "Dívida não encontrada." });
+    return;
+  }
+  response.json({ debt: serializeDebt(result.rows[0]) });
+}));
+
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
@@ -260,7 +438,7 @@ router.post("/launches", requireAuth, asyncRoute(async (request, response) => {
   const result = await getDb().query(
     `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at`,
+     RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id`,
     [randomUUID(), request.user!.id, data.type, data.name, cents(data.amount), data.dueDate, data.type === "parcela" ? data.installmentsRemaining ?? 1 : null],
   );
   response.status(201).json({ launch: serializeLaunch(result.rows[0]) });
@@ -292,7 +470,7 @@ router.patch("/launches/:id", requireAuth, asyncRoute(async (request, response) 
             paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) WHEN $3 = 'pending' THEN NULL ELSE paid_at END,
             updated_at = NOW()
       WHERE id = $1 AND user_id = $2
-      RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at`,
+      RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id`,
     [request.params.id, request.user!.id, next.status ?? null, next.name ?? null, next.amount === undefined ? null : cents(next.amount), next.dueDate ?? null],
   );
   response.json({ launch: serializeLaunch(result.rows[0]) });

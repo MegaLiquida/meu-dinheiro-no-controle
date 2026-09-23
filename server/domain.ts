@@ -21,6 +21,8 @@ export type Launch = {
   status: LaunchStatus;
   installmentsRemaining?: number;
   paidAt?: string | null;
+  recurringId?: string | null;
+  purchaseInstallmentId?: string | null;
 };
 
 export type Dashboard = {
