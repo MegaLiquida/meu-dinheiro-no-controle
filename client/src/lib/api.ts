@@ -26,12 +26,15 @@ export type Launch = {
   paidAt?: string | null;
   recurringId?: string | null;
   purchaseInstallmentId?: string | null;
+  category?: string | null;
 };
 
 export type RecurringCommitment = { id: string; kind: "entrada" | "conta"; name: string; amount: number; dueDay: number; startDate: string; category?: string | null; active: boolean };
 export type PurchaseInstallment = { id: string; installmentNumber: number; amount: number; dueDate: string; status: LaunchStatus; paidAt?: string | null };
 export type Purchase = { id: string; name: string; totalAmount: number; installmentCount: number; firstDueDate: string; category?: string | null; installments: PurchaseInstallment[] };
 export type Debt = { id: string; name: string; creditor?: string | null; balance: number; installment: number; dueDay?: number | null; interestRate?: number | null; priority: "essential" | "high" | "normal" | "low"; status: "open" | "negotiating" | "paid"; notes?: string | null };
+export type Goal = { id: string; name: string; target: number; current: number; dueDate?: string | null; status: "active" | "completed" | "paused" };
+export type MonthlyData = { month: string; launches: Launch[]; summary: { plannedIncome: number; plannedExpenses: number; plannedBalance: number; realizedIncome: number; realizedExpenses: number; realizedBalance: number }; categories: { category: string; total: number }[]; budgets: { id: string; category: string; month: string; limit: number }[]; goals: Goal[] };
 
 export type IncomeFrequency = "monthly" | "biweekly" | "weekly" | "irregular";
 export type FinancialProfile = {
@@ -89,8 +92,8 @@ export const api = {
   dashboard: () => request<Dashboard>("/dashboard"),
   profile: () => request<{ profile: FinancialProfile }>("/profile"),
   saveProfile: (body: FinancialProfile) => request<{ profile: FinancialProfile }>("/profile", { method: "PUT", body: JSON.stringify(body) }),
-  addLaunch: (body: { type: LaunchType; name: string; amount: number; dueDate: string; installmentsRemaining?: number }) => request<{ launch: Launch }>("/launches", { method: "POST", body: JSON.stringify(body) }),
-  updateLaunch: (id: string, body: Partial<Pick<Launch, "status" | "name" | "amount" | "dueDate">>) => request<{ launch: Launch }>(`/launches/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  addLaunch: (body: { type: LaunchType; name: string; amount: number; dueDate: string; installmentsRemaining?: number; category?: string | null }) => request<{ launch: Launch }>("/launches", { method: "POST", body: JSON.stringify(body) }),
+  updateLaunch: (id: string, body: Partial<Pick<Launch, "status" | "name" | "amount" | "dueDate" | "category">>) => request<{ launch: Launch }>(`/launches/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteLaunch: (id: string) => request<void>(`/launches/${id}`, { method: "DELETE" }),
   simulate: (body: { amount: number; installments: number; firstDueDate: string }) => request<{ monthlyInstallment: number; projection: { label: string; balance: number; active: boolean }[]; lowest: number; result: "good" | "attention" | "danger" }>("/simulate", { method: "POST", body: JSON.stringify(body) }),
   recurring: () => request<{ recurring: RecurringCommitment[] }>("/recurring"),
@@ -102,6 +105,12 @@ export const api = {
   debts: () => request<{ debts: Debt[] }>("/debts"),
   addDebt: (body: Omit<Debt, "id">) => request<{ debt: Debt }>("/debts", { method: "POST", body: JSON.stringify(body) }),
   updateDebt: (id: string, body: Partial<Omit<Debt, "id">>) => request<{ debt: Debt }>(`/debts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  monthly: (month: string) => request<MonthlyData>(`/monthly?month=${encodeURIComponent(month)}`),
+  addBudget: (body: { category: string; month: string; limit: number }) => request<{ budget: { id: string; category: string; month: string; limit: number } }>("/budgets", { method: "POST", body: JSON.stringify(body) }),
+  deleteBudget: (id: string) => request<void>(`/budgets/${id}`, { method: "DELETE" }),
+  goals: () => request<{ goals: Goal[] }>("/goals"),
+  addGoal: (body: { name: string; target: number; current?: number; dueDate?: string | null }) => request<{ goal: Goal }>("/goals", { method: "POST", body: JSON.stringify(body) }),
+  updateGoal: (id: string, body: Partial<Omit<Goal, "id">>) => request<{ goal: Goal }>(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   adminMetrics: () => request<AdminMetrics>("/admin/metrics"),
   adminUsers: (params: { query?: string; status?: string; page?: number; limit?: number } = {}) => request<{ users: User[]; total: number; page: number; limit: number }>(`/admin/users?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== "") as [string, string][]).toString()}`),
   adminUser: (id: string) => request<{ user: User; launches: Launch[] }>(`/admin/users/${id}`),

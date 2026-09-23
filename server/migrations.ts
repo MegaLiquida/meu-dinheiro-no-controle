@@ -88,6 +88,7 @@ const migrations = [
       );
 
       ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS recurring_id TEXT REFERENCES recurring_commitments(id) ON DELETE SET NULL;
+      ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS category TEXT;
 
       CREATE TABLE IF NOT EXISTS purchases (
         id TEXT PRIMARY KEY,

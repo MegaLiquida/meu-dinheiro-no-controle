@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
 import { buildDashboard, buildSimulation, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
-import { addMonthsKeepingDay, splitCents } from "./planning";
+import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 
 const router = Router();
 
@@ -15,6 +15,7 @@ const launchSchema = z.object({
   amount: z.coerce.number().finite().nonnegative().max(100_000_000),
   dueDate: dateSchema,
   installmentsRemaining: z.coerce.number().int().positive().max(600).optional(),
+  category: z.string().trim().max(60).optional().nullable(),
 });
 const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(8).max(200) });
 const registerSchema = loginSchema.extend({ name: z.string().trim().min(2).max(120) });
@@ -52,6 +53,9 @@ const debtSchema = z.object({
   status: z.enum(["open", "negotiating", "paid"]).default("open"),
   notes: z.string().trim().max(1000).optional().nullable(),
 });
+const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Use um mês no formato AAAA-MM.");
+const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: z.coerce.number().finite().nonnegative().max(100_000_000) });
+const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: z.coerce.number().finite().positive().max(100_000_000), current: z.coerce.number().finite().nonnegative().max(100_000_000).default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next);
@@ -91,7 +95,7 @@ function serializeUser(row: { id: string; name: string; email: string; role: str
   };
 }
 
-function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; amount_cents: number; due_date: string | Date; status: Launch["status"]; installments_remaining?: number | null; paid_at?: Date | string | null; recurring_id?: string | null; purchase_installment_id?: string | null }): Launch {
+function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; amount_cents: number; due_date: string | Date; status: Launch["status"]; installments_remaining?: number | null; paid_at?: Date | string | null; recurring_id?: string | null; purchase_installment_id?: string | null; category?: string | null }): Launch {
   return {
     id: row.id,
     type: row.type,
@@ -103,6 +107,7 @@ function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; 
     paidAt: row.paid_at ? typeof row.paid_at === "string" ? row.paid_at : row.paid_at.toISOString() : null,
     recurringId: row.recurring_id ?? null,
     purchaseInstallmentId: row.purchase_installment_id ?? null,
+    category: row.category ?? null,
   };
 }
 
@@ -143,7 +148,7 @@ function fallbackProfile(launches: Launch[]): FinancialProfile {
 
 function getLaunches(userId: string) {
   return getDb().query(
-    `SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id
+    `SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id, category
        FROM financial_launches
       WHERE user_id = $1
       ORDER BY due_date ASC, created_at ASC`,
@@ -160,7 +165,7 @@ async function recordAudit(actorUserId: string | null, targetUserId: string | nu
 }
 
 async function generateRecurringLaunches(userId: string, recurringId: string) {
-  const source = await getDb().query("SELECT kind, name, amount_cents, due_day, start_date FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
+  const source = await getDb().query("SELECT kind, name, amount_cents, due_day, start_date, category FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
   if (!source.rowCount) return;
   const row = source.rows[0];
   const today = todayIso();
@@ -169,10 +174,10 @@ async function generateRecurringLaunches(userId: string, recurringId: string) {
   for (let index = 0; index < 24; index += 1) {
     const dueDate = addMonthsKeepingDay(firstDue, index, Number(row.due_day));
     await getDb().query(
-      `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, recurring_id)
-       SELECT $1, $2, $3, $4, $5, $6, $7
+      `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, recurring_id, category)
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8
        WHERE NOT EXISTS (SELECT 1 FROM financial_launches WHERE recurring_id = $7 AND due_date = $6)`,
-      [randomUUID(), userId, row.kind === "entrada" ? "entrada" : "conta", row.name, row.amount_cents, dueDate, recurringId],
+      [randomUUID(), userId, row.kind === "entrada" ? "entrada" : "conta", row.name, row.amount_cents, dueDate, recurringId, row.category ?? null],
     );
   }
 }
@@ -359,7 +364,7 @@ router.post("/purchases", requireAuth, asyncRoute(async (request, response) => {
       const installmentId = randomUUID();
       const dueDate = addMonthsKeepingDay(data.firstDueDate, index);
       await client.query("INSERT INTO purchase_installments (id, purchase_id, user_id, installment_number, amount_cents, due_date) VALUES ($1, $2, $3, $4, $5, $6)", [installmentId, purchaseId, request.user!.id, index + 1, installmentAmounts[index], dueDate]);
-      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining, purchase_installment_id) VALUES ($1, $2, 'parcela', $3, $4, $5, $6, $7)", [randomUUID(), request.user!.id, `${data.name} · parcela ${index + 1}/${data.installmentCount}`, installmentAmounts[index], dueDate, data.installmentCount - index, installmentId]);
+      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining, purchase_installment_id, category) VALUES ($1, $2, 'parcela', $3, $4, $5, $6, $7, $8)", [randomUUID(), request.user!.id, `${data.name} · parcela ${index + 1}/${data.installmentCount}`, installmentAmounts[index], dueDate, data.installmentCount - index, installmentId, data.category ?? null]);
     }
   });
   await recordAudit(request.user!.id, request.user!.id, "purchase_created", { purchaseId, installmentCount: data.installmentCount });
@@ -416,6 +421,59 @@ router.patch("/debts/:id", requireAuth, asyncRoute(async (request, response) => 
   response.json({ debt: serializeDebt(result.rows[0]) });
 }));
 
+router.get("/monthly", requireAuth, asyncRoute(async (request, response) => {
+  const month = typeof request.query.month === "string" && monthSchema.safeParse(request.query.month).success ? request.query.month : todayIso().slice(0, 7);
+  const range = monthRange(month);
+  const result = await getDb().query("SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id, category FROM financial_launches WHERE user_id = $1 AND due_date BETWEEN $2 AND $3 ORDER BY due_date ASC", [request.user!.id, range.start, range.end]);
+  const launches = result.rows.map(serializeLaunch);
+  const income = launches.filter((launch) => launch.type === "entrada");
+  const expenses = launches.filter((launch) => launch.type !== "entrada");
+  const plannedIncome = income.reduce((sum, launch) => sum + launch.amount, 0);
+  const plannedExpenses = expenses.reduce((sum, launch) => sum + launch.amount, 0);
+  const realizedIncome = income.filter((launch) => launch.status === "paid").reduce((sum, launch) => sum + launch.amount, 0);
+  const realizedExpenses = expenses.filter((launch) => launch.status === "paid").reduce((sum, launch) => sum + launch.amount, 0);
+  const categories = Object.entries(expenses.reduce<Record<string, number>>((totals, launch) => { const key = launch.category || "Sem categoria"; totals[key] = (totals[key] ?? 0) + launch.amount; return totals; }, {})).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
+  const budgets = await getDb().query("SELECT id, category, month, limit_cents FROM budget_limits WHERE user_id = $1 AND month = $2 ORDER BY category ASC", [request.user!.id, month]);
+  const goals = await getDb().query("SELECT id, name, target_cents, current_cents, due_date, status FROM financial_goals WHERE user_id = $1 ORDER BY status ASC, created_at DESC", [request.user!.id]);
+  response.json({ month, launches, summary: { plannedIncome, plannedExpenses, plannedBalance: plannedIncome - plannedExpenses, realizedIncome, realizedExpenses, realizedBalance: realizedIncome - realizedExpenses }, categories, budgets: budgets.rows.map((row) => ({ id: row.id, category: row.category, month: row.month, limit: money(Number(row.limit_cents)) })), goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+}));
+
+router.post("/budgets", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = budgetSchema.safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ message: "Informe categoria, mês e limite válidos." }); return; }
+  const data = parsed.data;
+  const result = await getDb().query("INSERT INTO budget_limits (id, user_id, category, month, limit_cents) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, category, month) DO UPDATE SET limit_cents = EXCLUDED.limit_cents RETURNING id, category, month, limit_cents", [randomUUID(), request.user!.id, data.category, data.month, cents(data.limit)]);
+  response.status(201).json({ budget: { id: result.rows[0].id, category: result.rows[0].category, month: result.rows[0].month, limit: money(Number(result.rows[0].limit_cents)) } });
+}));
+
+router.delete("/budgets/:id", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("DELETE FROM budget_limits WHERE id = $1 AND user_id = $2", [request.params.id, request.user!.id]);
+  if (!result.rowCount) { response.status(404).json({ message: "Limite não encontrado." }); return; }
+  response.status(204).end();
+}));
+
+router.get("/goals", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("SELECT id, name, target_cents, current_cents, due_date, status, created_at, updated_at FROM financial_goals WHERE user_id = $1 ORDER BY status ASC, created_at DESC", [request.user!.id]);
+  response.json({ goals: result.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+}));
+
+router.post("/goals", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = goalSchema.safeParse(request.body);
+  if (!parsed.success || (parsed.data.dueDate && !validDate(parsed.data.dueDate))) { response.status(400).json({ message: "Confira nome, objetivo, valor e prazo." }); return; }
+  const data = parsed.data;
+  const result = await getDb().query("INSERT INTO financial_goals (id, user_id, name, target_cents, current_cents, due_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, target_cents, current_cents, due_date, status", [randomUUID(), request.user!.id, data.name, cents(data.target), cents(data.current), data.dueDate ?? null, data.status]);
+  response.status(201).json({ goal: { id: result.rows[0].id, name: result.rows[0].name, target: money(Number(result.rows[0].target_cents)), current: money(Number(result.rows[0].current_cents)), dueDate: result.rows[0].due_date, status: result.rows[0].status } });
+}));
+
+router.patch("/goals/:id", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = goalSchema.partial().safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ message: "Dados da meta inválidos." }); return; }
+  const data = parsed.data;
+  const result = await getDb().query("UPDATE financial_goals SET name = COALESCE($3, name), target_cents = COALESCE($4, target_cents), current_cents = COALESCE($5, current_cents), due_date = COALESCE($6, due_date), status = COALESCE($7, status), updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, name, target_cents, current_cents, due_date, status", [request.params.id, request.user!.id, data.name ?? null, data.target === undefined ? null : cents(data.target), data.current === undefined ? null : cents(data.current), data.dueDate ?? null, data.status ?? null]);
+  if (!result.rowCount) { response.status(404).json({ message: "Meta não encontrada." }); return; }
+  response.json({ goal: { id: result.rows[0].id, name: result.rows[0].name, target: money(Number(result.rows[0].target_cents)), current: money(Number(result.rows[0].current_cents)), dueDate: result.rows[0].due_date, status: result.rows[0].status } });
+}));
+
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
@@ -437,9 +495,9 @@ router.post("/launches", requireAuth, asyncRoute(async (request, response) => {
   const data = parsed.data;
   const result = await getDb().query(
     `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id`,
-    [randomUUID(), request.user!.id, data.type, data.name, cents(data.amount), data.dueDate, data.type === "parcela" ? data.installmentsRemaining ?? 1 : null],
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id, category`,
+    [randomUUID(), request.user!.id, data.type, data.name, cents(data.amount), data.dueDate, data.type === "parcela" ? data.installmentsRemaining ?? 1 : null, data.category ?? null],
   );
   response.status(201).json({ launch: serializeLaunch(result.rows[0]) });
 }));
@@ -450,6 +508,7 @@ router.patch("/launches/:id", requireAuth, asyncRoute(async (request, response) 
     name: z.string().trim().min(2).max(120).optional(),
     amount: z.coerce.number().finite().nonnegative().max(100_000_000).optional(),
     dueDate: dateSchema.optional(),
+    category: z.string().trim().max(60).nullable().optional(),
   }).safeParse(request.body);
   if (!body.success || (body.data.dueDate && !validDate(body.data.dueDate))) {
     response.status(400).json({ message: "Dados de atualização inválidos." });
@@ -467,11 +526,12 @@ router.patch("/launches/:id", requireAuth, asyncRoute(async (request, response) 
             name = COALESCE($4, name),
             amount_cents = COALESCE($5, amount_cents),
             due_date = COALESCE($6, due_date),
+            category = COALESCE($7, category),
             paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) WHEN $3 = 'pending' THEN NULL ELSE paid_at END,
             updated_at = NOW()
       WHERE id = $1 AND user_id = $2
       RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id`,
-    [request.params.id, request.user!.id, next.status ?? null, next.name ?? null, next.amount === undefined ? null : cents(next.amount), next.dueDate ?? null],
+      [request.params.id, request.user!.id, next.status ?? null, next.name ?? null, next.amount === undefined ? null : cents(next.amount), next.dueDate ?? null, next.category ?? null],
   );
   response.json({ launch: serializeLaunch(result.rows[0]) });
 }));

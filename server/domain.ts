@@ -23,6 +23,7 @@ export type Launch = {
   paidAt?: string | null;
   recurringId?: string | null;
   purchaseInstallmentId?: string | null;
+  category?: string | null;
 };
 
 export type Dashboard = {
