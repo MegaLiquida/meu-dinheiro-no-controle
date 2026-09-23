@@ -28,4 +28,21 @@ describe("financial domain", () => {
     expect(simulation.result).toBe("danger");
     expect(simulation.lowest).toBeLessThan(0);
   });
+
+  it("uses the financial profile to calculate the protected margin and priorities", () => {
+    const dashboard = buildDashboard(launches, "2026-09-21", {
+      monthlyIncome: 3800,
+      incomeFrequency: "monthly",
+      nextIncomeDate: "2026-10-05",
+      currentBalance: 900,
+      balanceAsOfDate: "2026-09-21",
+      safetyMargin: 1000,
+      onboardingCompleted: true,
+    });
+    expect(dashboard.currentBalance).toBe(900);
+    expect(dashboard.projectedBalance).toBe(500);
+    expect(dashboard.metrics.committedPercent).toBe(42);
+    expect(dashboard.alerts.some((alert) => alert.id === "safety-margin")).toBe(true);
+    expect(dashboard.priorities[0].id).toBe("margin");
+  });
 });

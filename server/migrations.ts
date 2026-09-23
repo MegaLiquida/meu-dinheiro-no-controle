@@ -53,6 +53,23 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_user_id, created_at DESC);
     `,
   },
+  {
+    name: "002_financial_profiles",
+    sql: `
+      CREATE TABLE IF NOT EXISTS user_profiles (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        monthly_income_cents INTEGER NOT NULL DEFAULT 0 CHECK (monthly_income_cents >= 0),
+        income_frequency TEXT NOT NULL DEFAULT 'monthly' CHECK (income_frequency IN ('monthly', 'biweekly', 'weekly', 'irregular')),
+        next_income_date DATE,
+        current_balance_cents INTEGER NOT NULL DEFAULT 0,
+        balance_as_of_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        safety_margin_cents INTEGER NOT NULL DEFAULT 0 CHECK (safety_margin_cents >= 0),
+        onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `,
+  },
 ];
 
 export async function runMigrations(pool: Pool) {

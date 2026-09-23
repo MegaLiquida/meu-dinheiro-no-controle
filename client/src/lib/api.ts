@@ -26,6 +26,17 @@ export type Launch = {
   paidAt?: string | null;
 };
 
+export type IncomeFrequency = "monthly" | "biweekly" | "weekly" | "irregular";
+export type FinancialProfile = {
+  monthlyIncome: number;
+  incomeFrequency: IncomeFrequency;
+  nextIncomeDate: string | null;
+  currentBalance: number;
+  balanceAsOfDate: string;
+  safetyMargin: number;
+  onboardingCompleted: boolean;
+};
+
 export type Dashboard = {
   today: string;
   monthLabel: string;
@@ -34,7 +45,11 @@ export type Dashboard = {
   nextIncome: { name: string; amount: number; dueDate: string } | null;
   upcoming: Launch[];
   launches: Launch[];
-  metrics: { incomeTotal: number; fixedTotal: number; installmentsTotal: number };
+  metrics: { incomeTotal: number; fixedTotal: number; installmentsTotal: number; committedPercent: number };
+  profile: FinancialProfile;
+  overdue: Launch[];
+  alerts: { id: string; tone: "danger" | "attention" | "good"; title: string; detail: string }[];
+  priorities: { id: string; title: string; detail: string }[];
 };
 
 export type AdminMetrics = { users: number; activeUsers: number; attentionUsers: number; launches: number };
@@ -65,6 +80,8 @@ export const api = {
   register: (body: { name: string; email: string; password: string }) => request<{ user: User }>("/auth/register", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   dashboard: () => request<Dashboard>("/dashboard"),
+  profile: () => request<{ profile: FinancialProfile }>("/profile"),
+  saveProfile: (body: FinancialProfile) => request<{ profile: FinancialProfile }>("/profile", { method: "PUT", body: JSON.stringify(body) }),
   addLaunch: (body: { type: LaunchType; name: string; amount: number; dueDate: string; installmentsRemaining?: number }) => request<{ launch: Launch }>("/launches", { method: "POST", body: JSON.stringify(body) }),
   updateLaunch: (id: string, body: Partial<Pick<Launch, "status" | "name" | "amount" | "dueDate">>) => request<{ launch: Launch }>(`/launches/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteLaunch: (id: string) => request<void>(`/launches/${id}`, { method: "DELETE" }),

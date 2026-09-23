@@ -10,6 +10,8 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Dashboard com saldo atual, saldo projetado, próxima entrada e próximos vencimentos.
 - Calendário mensal com marcação de lançamento pago.
 - Simulador de compra parcelada calculado no backend.
+- Onboarding guiado com renda, próxima entrada, saldo atual e margem de segurança.
+- Centro de controle com alertas, comprometimento da renda e próximos passos.
 - Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
 - Métricas reais de usuários e lançamentos.
 - Consulta de clientes e detalhe dos lançamentos de cada conta.
@@ -83,6 +85,7 @@ A API estará disponível no mesmo host do frontend:
 - `GET/POST /api/launches`
 - `PATCH/DELETE /api/launches/:id`
 - `POST /api/simulate`
+- `GET/PUT /api/profile`
 - `GET /api/admin/metrics`
 - `GET /api/admin/users`
 - `GET /api/admin/users/:id`

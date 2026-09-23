@@ -3,7 +3,7 @@ import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
-import { buildDashboard, buildSimulation, type Launch } from "./domain";
+import { buildDashboard, buildSimulation, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
 
 const router = Router();
 
@@ -17,6 +17,14 @@ const launchSchema = z.object({
 });
 const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(8).max(200) });
 const registerSchema = loginSchema.extend({ name: z.string().trim().min(2).max(120) });
+const profileSchema = z.object({
+  monthlyIncome: z.coerce.number().finite().nonnegative().max(100_000_000),
+  incomeFrequency: z.enum(["monthly", "biweekly", "weekly", "irregular"]),
+  nextIncomeDate: dateSchema.nullable(),
+  currentBalance: z.coerce.number().finite().min(-100_000_000).max(100_000_000),
+  balanceAsOfDate: dateSchema,
+  safetyMargin: z.coerce.number().finite().nonnegative().max(100_000_000),
+});
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next);
@@ -69,6 +77,41 @@ function serializeLaunch(row: { id: string; type: Launch["type"]; name: string; 
   };
 }
 
+function serializeProfile(row: { monthly_income_cents: number; income_frequency: IncomeFrequency; next_income_date: string | Date | null; current_balance_cents: number; balance_as_of_date: string | Date; safety_margin_cents: number; onboarding_completed: boolean }): FinancialProfile {
+  return {
+    monthlyIncome: money(row.monthly_income_cents),
+    incomeFrequency: row.income_frequency,
+    nextIncomeDate: row.next_income_date ? typeof row.next_income_date === "string" ? row.next_income_date.slice(0, 10) : row.next_income_date.toISOString().slice(0, 10) : null,
+    currentBalance: money(row.current_balance_cents),
+    balanceAsOfDate: typeof row.balance_as_of_date === "string" ? row.balance_as_of_date.slice(0, 10) : row.balance_as_of_date.toISOString().slice(0, 10),
+    safetyMargin: money(row.safety_margin_cents),
+    onboardingCompleted: row.onboarding_completed,
+  };
+}
+
+async function getProfile(userId: string) {
+  const result = await getDb().query(
+    "SELECT monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, onboarding_completed FROM user_profiles WHERE user_id = $1",
+    [userId],
+  );
+  return result.rowCount ? serializeProfile(result.rows[0]) : null;
+}
+
+function fallbackProfile(launches: Launch[]): FinancialProfile {
+  const today = todayIso();
+  const income = launches.filter((launch) => launch.type === "entrada" && launch.status === "paid").reduce((sum, launch) => sum + launch.amount, 0);
+  const expenses = launches.filter((launch) => launch.type !== "entrada" && launch.status === "paid").reduce((sum, launch) => sum + launch.amount, 0);
+  return {
+    monthlyIncome: launches.filter((launch) => launch.type === "entrada").reduce((sum, launch) => sum + launch.amount, 0),
+    incomeFrequency: "monthly",
+    nextIncomeDate: launches.find((launch) => launch.type === "entrada" && launch.dueDate >= today)?.dueDate ?? null,
+    currentBalance: income - expenses,
+    balanceAsOfDate: today,
+    safetyMargin: 0,
+    onboardingCompleted: false,
+  };
+}
+
 function getLaunches(userId: string) {
   return getDb().query(
     `SELECT id, type, name, amount_cents, due_date, status, installments_remaining, paid_at
@@ -114,6 +157,7 @@ router.post("/auth/register", asyncRoute(async (request, response) => {
        RETURNING id, name, email, role, status, created_at, updated_at`,
       [userId, name, normalizedEmail, passwordHash],
     );
+    await getDb().query("INSERT INTO user_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", [userId]);
     await createSession(userId, response);
     response.status(201).json({ user: serializeUser(result.rows[0]) });
   } catch (error: unknown) {
@@ -171,10 +215,34 @@ router.get("/auth/me", asyncRoute(async (request, response) => {
   response.json({ user });
 }));
 
+router.get("/profile", requireAuth, asyncRoute(async (request, response) => {
+  const profile = await getProfile(request.user!.id);
+  response.json({ profile: profile ?? { monthlyIncome: 0, incomeFrequency: "monthly", nextIncomeDate: null, currentBalance: 0, balanceAsOfDate: todayIso(), safetyMargin: 0, onboardingCompleted: false } });
+}));
+
+router.put("/profile", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = profileSchema.safeParse(request.body);
+  if (!parsed.success || (parsed.data.nextIncomeDate && !validDate(parsed.data.nextIncomeDate)) || !validDate(parsed.data.balanceAsOfDate)) {
+    response.status(400).json({ message: "Confira renda, saldo, datas e margem de segurança." });
+    return;
+  }
+  const data = parsed.data;
+  const result = await getDb().query(
+    `INSERT INTO user_profiles (user_id, monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, onboarding_completed, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET monthly_income_cents = EXCLUDED.monthly_income_cents, income_frequency = EXCLUDED.income_frequency, next_income_date = EXCLUDED.next_income_date, current_balance_cents = EXCLUDED.current_balance_cents, balance_as_of_date = EXCLUDED.balance_as_of_date, safety_margin_cents = EXCLUDED.safety_margin_cents, onboarding_completed = TRUE, updated_at = NOW()
+     RETURNING monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, onboarding_completed`,
+    [request.user!.id, cents(data.monthlyIncome), data.incomeFrequency, data.nextIncomeDate, cents(data.currentBalance), data.balanceAsOfDate, cents(data.safetyMargin)],
+  );
+  await recordAudit(request.user!.id, request.user!.id, "financial_profile_updated");
+  response.json({ profile: serializeProfile(result.rows[0]) });
+}));
+
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
-  response.json(buildDashboard(launches));
+  const profile = await getProfile(request.user!.id);
+  response.json(buildDashboard(launches, todayIso(), profile ?? fallbackProfile(launches)));
 }));
 
 router.get("/launches", requireAuth, asyncRoute(async (request, response) => {
@@ -358,9 +426,11 @@ export async function ensureOwnerAccount() {
   if (existing.rowCount) return;
   if (password.length < 8) throw new Error("ADMIN_PASSWORD must contain at least 8 characters.");
   const name = process.env.ADMIN_NAME?.trim() || "Administrador";
+  const ownerId = randomUUID();
   await getDb().query(
     "INSERT INTO users (id, name, email, password_hash, role) VALUES ($1, $2, $3, $4, 'owner')",
-    [randomUUID(), name, email, await hashPassword(password)],
+    [ownerId, name, email, await hashPassword(password)],
   );
+  await getDb().query("INSERT INTO user_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", [ownerId]);
   console.log(`Seeded owner account ${email}`);
 }
