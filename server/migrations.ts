@@ -180,6 +180,12 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS notifications_user_read_idx ON notifications(user_id, read_at, created_at DESC);
     `,
   },
+  {
+    name: "005_launch_categories",
+    sql: `
+      ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS category TEXT;
+    `,
+  },
 ];
 
 export async function runMigrations(pool: Pool) {
