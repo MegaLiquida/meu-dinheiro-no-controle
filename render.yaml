@@ -3,10 +3,20 @@ services:
     name: meu-dinheiro-no-controle
     runtime: node
     plan: free
-    buildCommand: npm install --global pnpm@10.4.1 && pnpm install --frozen-lockfile && pnpm build
+    branch: projeto
+    buildCommand: npm install --global pnpm@10.4.1 && pnpm install --frozen-lockfile && pnpm check && pnpm build
+    preDeployCommand: node dist/migrate.js
     startCommand: pnpm start
-    healthCheckPath: /
+    healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

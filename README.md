@@ -1,23 +1,70 @@
 # Meu Dinheiro no Controle
 
-Protótipo web do **Meu Dinheiro no Controle**, com tela para clientes e painel administrativo para gestão de usuários, saúde financeira e lançamentos.
+Aplicação web de organização financeira pessoal com ambiente do cliente e painel administrativo. A primeira versão funcional usa React no frontend, Express na API e PostgreSQL para persistência.
+
+## O que já funciona
+
+- Cadastro e login com sessão em cookie `HttpOnly`.
+- Isolamento dos lançamentos pelo usuário autenticado.
+- Cadastro, edição de status e exclusão de lançamentos.
+- Dashboard com saldo atual, saldo projetado, próxima entrada e próximos vencimentos.
+- Calendário mensal com marcação de lançamento pago.
+- Simulador de compra parcelada calculado no backend.
+- Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
+- Métricas reais de usuários e lançamentos.
+- Consulta de clientes e detalhe dos lançamentos de cada conta.
+- Desativação e reativação de usuários por administrador ou proprietário.
+- Auditoria de login e alterações de status.
+- Migração automática do schema no deploy do Render.
 
 ## Stack
 
-- React + TypeScript + Vite
+- React 19 + TypeScript + Vite
 - Tailwind CSS 4 e CSS customizado para a identidade visual
-- Express para servir os arquivos compilados em produção
-- Armazenamento local no navegador nesta fase de protótipo
+- Express 4
+- PostgreSQL via `pg`
+- `bcryptjs` para hash de senhas
+- `zod` para validação de payloads
 - Node.js 22
+
+## Estrutura principal
+
+```text
+client/              React, telas e cliente HTTP
+server/index.ts      servidor Express e arquivos estáticos
+server/api.ts        autenticação, API financeira e API administrativa
+server/auth.ts       sessões, cookies e autorização por papel
+server/db.ts         pool PostgreSQL
+server/migrations.ts schema inicial e migrações
+server/domain.ts     saldo projetado e simulador
+shared/              constantes compartilhadas
+render.yaml          configuração do serviço no Render
+```
 
 ## Rodar localmente
 
+Instale Node 22 e pnpm 10. Depois:
+
 ```bash
 pnpm install
+cp .env.example .env
+```
+
+Preencha `DATABASE_URL` com uma conexão PostgreSQL de desenvolvimento. Não use a senha de produção em arquivos locais versionados. Para criar automaticamente o primeiro proprietário, preencha também:
+
+```text
+ADMIN_NAME=Administrador
+ADMIN_EMAIL=admin@exemplo.com
+ADMIN_PASSWORD=uma-senha-com-ao-menos-8-caracteres
+```
+
+Inicie o modo de desenvolvimento:
+
+```bash
 pnpm dev
 ```
 
-Para validar o build de produção:
+O Vite executa o frontend. Para executar a API compilada:
 
 ```bash
 pnpm check
@@ -25,36 +72,55 @@ pnpm build
 pnpm start
 ```
 
-A tela administrativa fica disponível em `/admin`.
+A API estará disponível no mesmo host do frontend:
 
-## Publicar no GitHub
-
-Crie um repositório vazio no GitHub e, na raiz deste projeto, execute:
-
-```bash
-git add .
-git commit -m "feat: add admin management panel"
-git branch -M main
-git remote add origin https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git
-git push -u origin main
-```
-
-Substitua a URL do `origin` pela URL real do repositório. O repositório deve permanecer privado se os dados reais de clientes forem adicionados antes da implementação de autenticação e controle de acesso.
+- `GET /api/health`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `GET /api/dashboard`
+- `GET/POST /api/launches`
+- `PATCH/DELETE /api/launches/:id`
+- `POST /api/simulate`
+- `GET /api/admin/metrics`
+- `GET /api/admin/users`
+- `GET /api/admin/users/:id`
+- `PATCH /api/admin/users/:id/status`
+- `GET /api/admin/audit`
 
 ## Deploy no Render
 
-O arquivo `render.yaml` já contém a configuração do serviço web:
+O arquivo `render.yaml` foi preparado para o serviço web na branch `projeto`.
 
-- **Runtime:** Node
-- **Build:** `corepack enable && pnpm install --frozen-lockfile && pnpm build`
-- **Start:** `pnpm start`
-- **Health check:** `/`
-- **Deploy automático:** a cada commit na branch conectada
+1. Crie ou abra o Web Service ligado ao repositório `MegaLiquida/meu-dinheiro-no-controle`.
+2. Use a branch `projeto` ou altere o campo `branch` do Blueprint se a branch for renomeada.
+3. Configure no ambiente do serviço:
+   - `DATABASE_URL`: URL privada do PostgreSQL existente no Render.
+   - `ADMIN_NAME`: nome do primeiro proprietário.
+   - `ADMIN_EMAIL`: e-mail do primeiro proprietário.
+   - `ADMIN_PASSWORD`: senha inicial do primeiro proprietário.
+4. Faça o deploy pelo Blueprint ou sincronize o `render.yaml`.
+5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta esperada é `{"ok":true,"database":"connected"}`.
 
-No Render, escolha **New > Blueprint** e conecte o repositório do GitHub. O Render detectará o `render.yaml` e criará o serviço. Alternativamente, crie um Web Service manualmente usando os mesmos comandos.
+O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. A migração cria as tabelas, índices e restrições necessárias. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
 
-A aplicação usa `process.env.PORT`, portanto não é necessário definir uma porta fixa no Render.
+A URL do banco deve ser configurada apenas no Render ou em um `.env` ignorado localmente. Nunca coloque credenciais no GitHub, no frontend, no README ou em logs.
 
-## Próxima etapa de arquitetura
+## Segurança e limites atuais
 
-O protótipo ainda usa dados demonstrativos e `localStorage`. Para produção, o painel deve receber autenticação, banco de dados, auditoria de ações, permissões administrativas e armazenamento seguro de dados. Esses itens devem ser adicionados antes de cadastrar clientes reais.
+O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas as operações financeiras do cliente. O painel administrativo exige papel apropriado. Contas inativas não conseguem iniciar nova sessão e suas sessões existentes são removidas quando o acesso é desativado.
+
+A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
+
+A primeira versão ainda não inclui recuperação de senha por e-mail, convites com envio de e-mail, exportação efetiva de arquivos, categorias personalizadas, recorrência automática ou Row-Level Security do PostgreSQL. Esses itens devem ser adicionados antes de ampliar a operação para uma base grande.
+
+## Validação
+
+```bash
+pnpm install --frozen-lockfile
+pnpm check
+pnpm build
+```
+
+Antes de usar dados reais, valide pelo menos dois usuários distintos, incluindo leitura, edição e exclusão cruzadas, acesso sem autenticação, permissões administrativas e bloqueio de usuário inativo.
