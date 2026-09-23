@@ -12,6 +12,14 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Simulador de compra parcelada calculado no backend.
 - Onboarding guiado com renda, próxima entrada, saldo atual e margem de segurança.
 - Centro de controle com alertas, comprometimento da renda e próximos passos.
+- Contas e entradas recorrentes com geração de vencimentos futuros.
+- Compras parceladas agrupadas com parcelas individuais e marcação de pagamento.
+- Plano de dívidas com saldo, parcela, prioridade, negociação e quitação.
+- Visão mensal com planejado versus realizado, categorias, limites e metas.
+- Simulador comparativo com diferentes prazos e menor saldo projetado.
+- Central de notificações internas baseada em alertas financeiros reais.
+- Troca segura de senha, exportação JSON e importação de lançamentos CSV.
+- Rate limiting de login e verificação de origem nas operações de escrita em produção.
 - Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
 - Métricas reais de usuários e lançamentos.
 - Consulta de clientes e detalhe dos lançamentos de cada conta.
@@ -86,6 +94,16 @@ A API estará disponível no mesmo host do frontend:
 - `PATCH/DELETE /api/launches/:id`
 - `POST /api/simulate`
 - `GET/PUT /api/profile`
+- `GET/POST/PATCH /api/recurring`
+- `GET/POST /api/purchases`
+- `PATCH /api/purchase-installments/:id`
+- `GET/POST/PATCH /api/debts`
+- `GET /api/monthly?month=AAAA-MM`
+- `POST/DELETE /api/budgets`
+- `GET/POST/PATCH /api/goals`
+- `GET/PATCH /api/notifications`
+- `POST /api/auth/change-password`
+- `GET /api/export` e `POST /api/import/csv`
 - `GET /api/admin/metrics`
 - `GET /api/admin/users`
 - `GET /api/admin/users/:id`
@@ -106,7 +124,7 @@ O arquivo `render.yaml` foi preparado para o serviço web na branch `projeto`.
 4. Faça o deploy pelo Blueprint ou sincronize o `render.yaml`.
 5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta esperada é `{"ok":true,"database":"connected"}`.
 
-O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. A migração cria as tabelas, índices e restrições necessárias. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
+O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, limites, metas e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
 
 A URL do banco deve ser configurada apenas no Render ou em um `.env` ignorado localmente. Nunca coloque credenciais no GitHub, no frontend, no README ou em logs.
 
@@ -116,7 +134,7 @@ O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas 
 
 A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
 
-A primeira versão ainda não inclui recuperação de senha por e-mail, convites com envio de e-mail, exportação efetiva de arquivos, categorias personalizadas, recorrência automática ou Row-Level Security do PostgreSQL. Esses itens devem ser adicionados antes de ampliar a operação para uma base grande.
+O produto já inclui troca de senha autenticada, exportação JSON, importação CSV, categorias livres, recorrência automática e notificações internas. A recuperação de senha por e-mail, convites com envio de e-mail, integração bancária/Open Finance e Row-Level Security do PostgreSQL ainda dependem da escolha de um provedor de e-mail/bancário e devem ser ativados antes de uma operação pública em escala.
 
 ## Validação
 
