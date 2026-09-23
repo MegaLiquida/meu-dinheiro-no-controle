@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDashboard, buildSimulation, type Launch } from "./domain";
+import { buildDashboard, buildSimulation, buildSimulationScenarios, type Launch } from "./domain";
 
 const launches: Launch[] = [
   { id: "income", type: "entrada", name: "Salário", amount: 3800, dueDate: "2026-09-05", status: "paid" },
@@ -44,5 +44,13 @@ describe("financial domain", () => {
     expect(dashboard.metrics.committedPercent).toBe(42);
     expect(dashboard.alerts.some((alert) => alert.id === "safety-margin")).toBe(true);
     expect(dashboard.priorities[0].id).toBe("margin");
+  });
+
+  it("compares installment scenarios using the configured safety margin", () => {
+    const scenarios = buildSimulationScenarios(launches, 1200, "2026-09-25", 1000);
+    expect(scenarios.map((scenario) => scenario.installments)).toEqual([1, 3, 6, 10, 12, 18, 24]);
+    expect(scenarios[0].monthlyInstallment).toBe(1200);
+    expect(scenarios[0].result).toBe("attention");
+    expect(scenarios.at(-1)?.monthlyInstallment).toBe(50);
   });
 });

@@ -3,7 +3,7 @@ import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
-import { buildDashboard, buildSimulation, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
+import { buildDashboard, buildSimulation, buildSimulationScenarios, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 
 const router = Router();
@@ -56,6 +56,7 @@ const debtSchema = z.object({
 const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Use um mês no formato AAAA-MM.");
 const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: z.coerce.number().finite().nonnegative().max(100_000_000) });
 const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: z.coerce.number().finite().positive().max(100_000_000), current: z.coerce.number().finite().nonnegative().max(100_000_000).default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
+const changePasswordSchema = z.object({ currentPassword: z.string().min(8).max(200), newPassword: z.string().min(8).max(200) });
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next);
@@ -154,6 +155,25 @@ function getLaunches(userId: string) {
       ORDER BY due_date ASC, created_at ASC`,
     [userId],
   );
+}
+
+async function syncNotifications(userId: string) {
+  const result = await getLaunches(userId);
+  const launches = result.rows.map(serializeLaunch);
+  const profile = await getProfile(userId);
+  const dashboard = buildDashboard(launches, todayIso(), profile ?? fallbackProfile(launches));
+  for (const alert of dashboard.alerts) {
+    await getDb().query(
+      `INSERT INTO notifications (id, user_id, dedupe_key, tone, title, detail)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id, dedupe_key) DO UPDATE SET tone = EXCLUDED.tone, title = EXCLUDED.title, detail = EXCLUDED.detail, updated_at = NOW()`,
+      [randomUUID(), userId, alert.id, alert.tone, alert.title, alert.detail],
+    );
+  }
+}
+
+function serializeNotification(row: Record<string, unknown>) {
+  return { id: row.id, tone: row.tone, title: row.title, detail: row.detail, read: Boolean(row.read_at), createdAt: row.created_at };
 }
 
 async function recordAudit(actorUserId: string | null, targetUserId: string | null, action: string, metadata: Record<string, unknown> = {}) {
@@ -279,6 +299,24 @@ router.get("/auth/me", asyncRoute(async (request, response) => {
     return;
   }
   response.json({ user });
+}));
+
+router.post("/auth/change-password", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = changePasswordSchema.safeParse(request.body);
+  if (!parsed.success || parsed.data.currentPassword === parsed.data.newPassword) {
+    response.status(400).json({ message: "Informe uma nova senha diferente da atual, com pelo menos 8 caracteres." });
+    return;
+  }
+  const current = await getDb().query("SELECT password_hash FROM users WHERE id = $1 AND status = 'active'", [request.user!.id]);
+  if (!current.rowCount || !(await verifyPassword(parsed.data.currentPassword, current.rows[0].password_hash))) {
+    response.status(401).json({ message: "A senha atual não confere." });
+    return;
+  }
+  await getDb().query("UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1", [request.user!.id, await hashPassword(parsed.data.newPassword)]);
+  await getDb().query("DELETE FROM sessions WHERE user_id = $1", [request.user!.id]);
+  await createSession(request.user!.id, response);
+  await recordAudit(request.user!.id, request.user!.id, "auth_password_changed");
+  response.status(204).end();
 }));
 
 router.get("/profile", requireAuth, asyncRoute(async (request, response) => {
@@ -474,6 +512,31 @@ router.patch("/goals/:id", requireAuth, asyncRoute(async (request, response) => 
   response.json({ goal: { id: result.rows[0].id, name: result.rows[0].name, target: money(Number(result.rows[0].target_cents)), current: money(Number(result.rows[0].current_cents)), dueDate: result.rows[0].due_date, status: result.rows[0].status } });
 }));
 
+router.get("/notifications", requireAuth, asyncRoute(async (request, response) => {
+  await syncNotifications(request.user!.id);
+  const result = await getDb().query("SELECT id, tone, title, detail, read_at, created_at FROM notifications WHERE user_id = $1 ORDER BY read_at NULLS FIRST, created_at DESC LIMIT 30", [request.user!.id]);
+  response.json({ notifications: result.rows.map(serializeNotification), unread: result.rows.filter((row) => !row.read_at).length });
+}));
+
+router.patch("/notifications/:id/read", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("UPDATE notifications SET read_at = COALESCE(read_at, NOW()), updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, tone, title, detail, read_at, created_at", [request.params.id, request.user!.id]);
+  if (!result.rowCount) { response.status(404).json({ message: "Notificação não encontrada." }); return; }
+  response.json({ notification: serializeNotification(result.rows[0]) });
+}));
+
+router.get("/export", requireAuth, asyncRoute(async (request, response) => {
+  const [profile, launches, recurring, purchases, debts, goals] = await Promise.all([
+    getProfile(request.user!.id),
+    getLaunches(request.user!.id),
+    getDb().query("SELECT id, kind, name, amount_cents, due_day, start_date, category, active FROM recurring_commitments WHERE user_id = $1 ORDER BY due_day", [request.user!.id]),
+    getDb().query("SELECT id, name, total_cents, installment_count, first_due_date, category, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
+    getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
+    getDb().query("SELECT id, name, target_cents, current_cents, due_date, status, created_at, updated_at FROM financial_goals WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
+  ]);
+  response.setHeader("Content-Disposition", `attachment; filename=meu-dinheiro-no-controle-${todayIso()}.json`);
+  response.json({ exportedAt: new Date().toISOString(), profile, launches: launches.rows.map(serializeLaunch), recurring: recurring.rows.map(serializeRecurring), purchases: purchases.rows.map(serializePurchase), debts: debts.rows.map(serializeDebt), goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+}));
+
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
@@ -552,7 +615,9 @@ router.post("/simulate", requireAuth, asyncRoute(async (request, response) => {
     return;
   }
   const result = await getLaunches(request.user!.id);
-  response.json(buildSimulation(result.rows.map(serializeLaunch), parsed.data.amount, parsed.data.installments, parsed.data.firstDueDate));
+  const profile = await getProfile(request.user!.id);
+  const launches = result.rows.map(serializeLaunch);
+  response.json({ ...buildSimulation(launches, parsed.data.amount, parsed.data.installments, parsed.data.firstDueDate, profile?.safetyMargin), scenarios: buildSimulationScenarios(launches, parsed.data.amount, parsed.data.firstDueDate, profile?.safetyMargin) });
 }));
 
 const adminRouter = Router();

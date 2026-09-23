@@ -13,14 +13,38 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   const database = initDb();
+  const authAttempts = new Map<string, { count: number; resetAt: number }>();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "100kb" }));
   app.use((request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", "SAMEORIGIN");
     response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     if (request.path.startsWith("/api")) response.setHeader("Cache-Control", "no-store");
+    next();
+  });
+
+  app.use("/api", (request, response, next) => {
+    if (process.env.NODE_ENV === "production" && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
+      const origin = request.get("origin");
+      const host = `${request.protocol}://${request.get("host")}`;
+      if (origin && origin !== host) {
+        response.status(403).json({ message: "Origem da requisição não autorizada." });
+        return;
+      }
+    }
+    if (request.path === "/auth/login" && request.method === "POST") {
+      const key = request.ip || "unknown";
+      const now = Date.now();
+      const current = authAttempts.get(key);
+      if (!current || current.resetAt <= now) authAttempts.set(key, { count: 1, resetAt: now + 15 * 60 * 1000 });
+      else if (current.count >= 30) {
+        response.status(429).json({ message: "Muitas tentativas. Aguarde alguns minutos e tente novamente." });
+        return;
+      } else current.count += 1;
+    }
     next();
   });
 
