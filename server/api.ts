@@ -572,7 +572,7 @@ router.post("/launches", requireAuth, asyncRoute(async (request, response) => {
   }
   const data = parsed.data;
   const result = await getDb().query(
-    `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining)
+    `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, installments_remaining, category)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id, category`,
     [randomUUID(), request.user!.id, data.type, data.name, cents(data.amount), data.dueDate, data.type === "parcela" ? data.installmentsRemaining ?? 1 : null, data.category ?? null],
@@ -608,7 +608,7 @@ router.patch("/launches/:id", requireAuth, asyncRoute(async (request, response) 
             paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) WHEN $3 = 'pending' THEN NULL ELSE paid_at END,
             updated_at = NOW()
       WHERE id = $1 AND user_id = $2
-      RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id`,
+      RETURNING id, type, name, amount_cents, due_date, status, installments_remaining, paid_at, recurring_id, purchase_installment_id, category`,
       [request.params.id, request.user!.id, next.status ?? null, next.name ?? null, next.amount === undefined ? null : cents(next.amount), next.dueDate ?? null, next.category ?? null],
   );
   response.json({ launch: serializeLaunch(result.rows[0]) });
