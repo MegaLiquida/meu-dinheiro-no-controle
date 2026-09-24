@@ -2,6 +2,115 @@ export type LaunchType = "entrada" | "conta" | "parcela";
 export type LaunchStatus = "pending" | "paid";
 export type IncomeFrequency = "monthly" | "biweekly" | "weekly" | "irregular";
 
+export const MAX_MONEY_CENTS = 9_000_000_000_000;
+
+export function moneyToCents(value: number) {
+  if (!Number.isFinite(value) || value < -MAX_MONEY_CENTS / 100 || value > MAX_MONEY_CENTS / 100) {
+    throw new Error("Valor monetário fora do limite permitido.");
+  }
+  const scaled = value * 100;
+  if (Math.abs(scaled - Math.round(scaled)) > 1e-7) {
+    throw new Error("Use no máximo duas casas decimais.");
+  }
+  const result = Math.round(scaled);
+  if (!Number.isSafeInteger(result)) throw new Error("Valor monetário não pode ser representado com segurança.");
+  return result;
+}
+
+export function normalizeMonthlyIncomeCents(
+  incomeCents: number,
+  frequency: IncomeFrequency,
+  conservativeIrregularIncomeCents?: number | null,
+) {
+  if (!Number.isSafeInteger(incomeCents) || incomeCents < 0) throw new Error("Renda inválida.");
+  if (conservativeIrregularIncomeCents != null && (!Number.isSafeInteger(conservativeIrregularIncomeCents) || conservativeIrregularIncomeCents < 0)) {
+    throw new Error("Renda conservadora inválida.");
+  }
+  if (frequency === "irregular") {
+    return {
+      monthlyIncomeCents: conservativeIrregularIncomeCents ?? 0,
+      source: conservativeIrregularIncomeCents == null ? "documented_zero_fallback" as const : "explicit_conservative" as const,
+      warning: conservativeIrregularIncomeCents == null
+        ? "Renda irregular sem estimativa conservadora: foi usado zero até que uma estimativa seja informada."
+        : null,
+    };
+  }
+  const multiplier = frequency === "biweekly" ? 26 / 12 : frequency === "weekly" ? 52 / 12 : 1;
+  return { monthlyIncomeCents: Math.round(incomeCents * multiplier), source: "frequency_normalization" as const, warning: null };
+}
+
+export function calculateEssentialFloorCents(expenses: Array<{ monthlyAmountCents: number; active: boolean }>) {
+  return expenses.reduce((total, expense) => expense.active ? total + expense.monthlyAmountCents : total, 0);
+}
+
+export function calculateSafeCapacityCents(input: {
+  conservativeMonthlyIncomeCents: number;
+  essentialFloorCents: number;
+  existingMonthlyCommitmentsCents: number;
+  safetyMarginCents: number;
+}) {
+  return Math.max(0, input.conservativeMonthlyIncomeCents - input.essentialFloorCents - input.existingMonthlyCommitmentsCents - input.safetyMarginCents);
+}
+
+export type PrioritizableDebt = {
+  id: string;
+  balanceCents: number;
+  priority?: "essential" | "high" | "normal" | "low" | null;
+  secured?: boolean | null;
+  daysOverdue?: number | null;
+  dueDate?: string | null;
+  interestRate?: number | null;
+  totalCostRate?: number | null;
+  negativeListing?: boolean | null;
+};
+
+export function deriveDaysOverdue(dueDate?: string | null, today = todayIso()) {
+  if (!dueDate || dueDate >= today) return 0;
+  const due = new Date(`${dueDate}T00:00:00Z`).valueOf();
+  const reference = new Date(`${today}T00:00:00Z`).valueOf();
+  if (!Number.isFinite(due) || !Number.isFinite(reference)) return 0;
+  return Math.max(0, Math.floor((reference - due) / 86_400_000));
+}
+
+export function prioritizeDebts<T extends PrioritizableDebt>(debts: T[], today = todayIso()) {
+  return debts.map((debt) => {
+    let score = 0;
+    const reasons: string[] = [];
+    if (debt.priority === "essential") { score += 100; reasons.push("serviço ou compromisso marcado como essencial"); }
+    else if (debt.priority === "high") { score += 35; reasons.push("prioridade alta informada"); }
+    if (debt.secured === true) { score += 60; reasons.push("dívida com garantia informada"); }
+    const daysOverdue = debt.daysOverdue ?? deriveDaysOverdue(debt.dueDate, today);
+    if (daysOverdue > 0) { score += Math.min(50, 10 + Math.floor(daysOverdue / 30) * 5); reasons.push(`${daysOverdue} dia(s) em atraso`); }
+    const cost = debt.totalCostRate ?? debt.interestRate;
+    if (cost != null) { score += Math.min(40, Math.floor(cost)); reasons.push(`custo conhecido de ${cost}%`); }
+    if (debt.negativeListing === true) { score += 15; reasons.push("negativação informada"); }
+    score += Math.min(20, Math.floor(debt.balanceCents / 100_000));
+    if (debt.balanceCents > 0) reasons.push("saldo devedor considerado como critério de desempate");
+    return { ...debt, daysOverdue, score, reasons };
+  }).sort((a, b) => b.score - a.score || b.balanceCents - a.balanceCents || a.id.localeCompare(b.id));
+}
+
+export function assertPlanCanActivate(monthlyTotalCents: number, safeCapacityCents: number) {
+  if (monthlyTotalCents > safeCapacityCents) {
+    throw new Error(`O total mensal do plano (${monthlyTotalCents} centavos) excede a capacidade segura (${safeCapacityCents} centavos).`);
+  }
+}
+
+export function calculatePaymentBalances(balanceCents: number, amountCents: number, confirmOverpayment = false) {
+  if (!Number.isSafeInteger(balanceCents) || balanceCents < 0 || !Number.isSafeInteger(amountCents) || amountCents <= 0) throw new Error("Saldo ou pagamento inválido.");
+  if (amountCents > balanceCents && !confirmOverpayment) throw new Error("O pagamento excede o saldo. Confirme explicitamente para continuar.");
+  return { balanceBeforeCents: balanceCents, balanceAfterCents: Math.max(0, balanceCents - amountCents), overpaymentCents: Math.max(0, amountCents - balanceCents) };
+}
+
+export function assertDebtStatus(balanceCents: number, status: "open" | "negotiating" | "paid") {
+  if (status === "paid" && balanceCents !== 0) throw new Error("A dívida só pode ser marcada como paga quando o saldo for zero.");
+}
+
+export function actionStateDates(status: "open" | "snoozed" | "resolved", snoozedUntil?: string | null, now = new Date()) {
+  if (status === "snoozed" && !snoozedUntil) throw new Error("Informe até quando a ação deve ser adiada.");
+  return { snoozedUntil: status === "snoozed" ? snoozedUntil! : null, resolvedAt: status === "resolved" ? now.toISOString() : null };
+}
+
 export type FinancialProfile = {
   monthlyIncome: number;
   incomeFrequency: IncomeFrequency;

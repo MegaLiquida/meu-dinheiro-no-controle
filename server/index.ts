@@ -1,5 +1,6 @@
 import express from "express";
 import { createServer } from "http";
+import { randomUUID } from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initDb, isDatabaseConfigured } from "./db";
@@ -19,6 +20,16 @@ async function startServer() {
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "100kb" }));
   app.use((request, response, next) => {
+    const requestId = randomUUID();
+    request.requestId = requestId;
+    response.setHeader("X-Request-Id", requestId);
+    const sendJson = response.json.bind(response);
+    response.json = ((body: unknown) => {
+      if (response.statusCode >= 400 && body && typeof body === "object" && !Array.isArray(body)) {
+        return sendJson({ ...(body as Record<string, unknown>), requestId });
+      }
+      return sendJson(body);
+    }) as typeof response.json;
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", "SAMEORIGIN");
     response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -55,13 +66,13 @@ async function startServer() {
     : path.resolve(__dirname, "..", "dist", "public");
 
   app.use(express.static(staticPath, { index: "index.html" }));
-  app.get("/api/*", (_request, response) => response.status(404).json({ message: "Endpoint não encontrado." }));
+  app.get("/api/*", (request, response) => response.status(404).json({ message: "Endpoint não encontrado.", requestId: request.requestId }));
   app.get("*", (_request, response) => response.sendFile(path.join(staticPath, "index.html")));
 
-  app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
-    console.error("Unhandled server error", error instanceof Error ? error.message : error);
+  app.use((error: unknown, request: express.Request, response: express.Response, _next: express.NextFunction) => {
+    console.error("Unhandled server error", { requestId: request.requestId, method: request.method, path: request.path, error: error instanceof Error ? error.message : String(error) });
     if (response.headersSent) return;
-    response.status(500).json({ message: "Não foi possível concluir a operação." });
+    response.status(500).json({ message: "Não foi possível concluir a operação.", requestId: request.requestId });
   });
 
   if (database) {

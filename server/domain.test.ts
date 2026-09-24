@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildDashboard, buildSimulation, buildSimulationScenarios, type Launch } from "./domain";
+import {
+  actionStateDates,
+  assertDebtStatus,
+  assertPlanCanActivate,
+  buildDashboard,
+  buildSimulation,
+  buildSimulationScenarios,
+  calculateEssentialFloorCents,
+  calculatePaymentBalances,
+  calculateSafeCapacityCents,
+  moneyToCents,
+  normalizeMonthlyIncomeCents,
+  prioritizeDebts,
+  type Launch,
+} from "./domain";
 
 const launches: Launch[] = [
   { id: "income", type: "entrada", name: "Salário", amount: 3800, dueDate: "2026-09-05", status: "paid" },
@@ -52,5 +66,59 @@ describe("financial domain", () => {
     expect(scenarios[0].monthlyInstallment).toBe(1200);
     expect(scenarios[0].result).toBe("attention");
     expect(scenarios.at(-1)?.monthlyInstallment).toBe(50);
+  });
+});
+
+describe("recovery planning rules", () => {
+  it("normalizes monthly, biweekly and weekly income using documented factors", () => {
+    expect(normalizeMonthlyIncomeCents(300_000, "monthly").monthlyIncomeCents).toBe(300_000);
+    expect(normalizeMonthlyIncomeCents(100_000, "biweekly").monthlyIncomeCents).toBe(216_667);
+    expect(normalizeMonthlyIncomeCents(100_000, "weekly").monthlyIncomeCents).toBe(433_333);
+  });
+
+  it("uses explicit conservative irregular income and otherwise falls back to zero", () => {
+    expect(normalizeMonthlyIncomeCents(500_000, "irregular", 280_000)).toMatchObject({ monthlyIncomeCents: 280_000, source: "explicit_conservative", warning: null });
+    expect(normalizeMonthlyIncomeCents(500_000, "irregular")).toMatchObject({ monthlyIncomeCents: 0, source: "documented_zero_fallback" });
+  });
+
+  it("sums only active essential expenses and never returns negative safe capacity", () => {
+    const essentialFloorCents = calculateEssentialFloorCents([
+      { monthlyAmountCents: 120_000, active: true },
+      { monthlyAmountCents: 30_000, active: false },
+      { monthlyAmountCents: 40_000, active: true },
+    ]);
+    expect(essentialFloorCents).toBe(160_000);
+    expect(calculateSafeCapacityCents({ conservativeMonthlyIncomeCents: 400_000, essentialFloorCents, existingMonthlyCommitmentsCents: 80_000, safetyMarginCents: 20_000 })).toBe(140_000);
+    expect(calculateSafeCapacityCents({ conservativeMonthlyIncomeCents: 100_000, essentialFloorCents, existingMonthlyCommitmentsCents: 80_000, safetyMarginCents: 20_000 })).toBe(0);
+  });
+
+  it("prioritizes only informed criteria and explains the result", () => {
+    const ranked = prioritizeDebts([
+      { id: "ordinary", balanceCents: 900_000 },
+      { id: "secured", balanceCents: 100_000, secured: true },
+      { id: "essential", balanceCents: 50_000, priority: "essential" },
+      { id: "overdue", balanceCents: 60_000, dueDate: "2026-01-01", totalCostRate: 18 },
+    ], "2026-03-02");
+    expect(ranked.map((debt) => debt.id)).toEqual(["essential", "secured", "overdue", "ordinary"]);
+    expect(ranked[0].reasons).toContain("serviço ou compromisso marcado como essencial");
+    expect(ranked.find((debt) => debt.id === "ordinary")?.reasons).not.toEqual(expect.arrayContaining([expect.stringContaining("juros")]));
+  });
+
+  it("enforces activation, payment, paid-state and action-state guardrails", () => {
+    expect(() => assertPlanCanActivate(120_001, 120_000)).toThrow("excede a capacidade segura");
+    expect(() => assertPlanCanActivate(120_000, 120_000)).not.toThrow();
+    expect(calculatePaymentBalances(100_000, 25_000)).toEqual({ balanceBeforeCents: 100_000, balanceAfterCents: 75_000, overpaymentCents: 0 });
+    expect(() => calculatePaymentBalances(100_000, 120_000)).toThrow("Confirme explicitamente");
+    expect(calculatePaymentBalances(100_000, 120_000, true).balanceAfterCents).toBe(0);
+    expect(() => assertDebtStatus(1, "paid")).toThrow("saldo for zero");
+    expect(() => actionStateDates("snoozed")).toThrow("até quando");
+    expect(actionStateDates("resolved", null, new Date("2026-09-24T12:00:00Z"))).toEqual({ snoozedUntil: null, resolvedAt: "2026-09-24T12:00:00.000Z" });
+  });
+
+  it("rejects non-finite money and values with more than two decimal places", () => {
+    expect(moneyToCents(12.34)).toBe(1234);
+    expect(() => moneyToCents(12.345)).toThrow("duas casas");
+    expect(() => moneyToCents(Number.NaN)).toThrow("limite");
+    expect(() => moneyToCents(Number.POSITIVE_INFINITY)).toThrow("limite");
   });
 });

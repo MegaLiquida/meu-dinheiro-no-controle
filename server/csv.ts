@@ -1,4 +1,12 @@
+import { createHash } from "node:crypto";
+import { moneyToCents } from "./domain";
+
 export type CsvLaunchRow = { type: "entrada" | "conta" | "parcela"; name: string; amount: number; dueDate: string; category: string | null; status: "pending" | "paid" };
+
+export function launchCsvHash(csv: string) {
+  const canonical = csv.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
 
 function parseLine(line: string) {
   const values: string[] = [];
@@ -30,7 +38,8 @@ export function parseLaunchCsv(csv: string) {
     const amount = Number(rawAmount);
     const dueDate = values[index("data")] ?? "";
     const status = ((values[index("status")] ?? "pending").toLowerCase() === "paid" ? "paid" : "pending") as CsvLaunchRow["status"];
-    if (!["entrada", "conta", "parcela"].includes(type) || !values[index("nome")] || !Number.isFinite(amount) || amount < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error(`Linha ${rowIndex + 2} inválida. Use tipo, nome, valor e data no formato AAAA-MM-DD.`);
+    try { moneyToCents(amount); } catch { throw new Error(`Linha ${rowIndex + 2} inválida. O valor deve ter no máximo duas casas decimais e estar no limite permitido.`); }
+    if (!["entrada", "conta", "parcela"].includes(type) || !values[index("nome")] || amount < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error(`Linha ${rowIndex + 2} inválida. Use tipo, nome, valor e data no formato AAAA-MM-DD.`);
     return { type, name: values[index("nome")], amount, dueDate, category: index("categoria") >= 0 ? values[index("categoria")] || null : null, status };
   });
 }

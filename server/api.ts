@@ -3,17 +3,25 @@ import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
-import { buildDashboard, buildSimulation, buildSimulationScenarios, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
+import type { PoolClient } from "pg";
+import { buildDashboard, buildSimulation, buildSimulationScenarios, moneyToCents, normalizeMonthlyIncomeCents, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
-import { parseLaunchCsv } from "./csv";
+import { launchCsvHash, parseLaunchCsv } from "./csv";
+import recoveryRouter from "./recovery";
 
 const router = Router();
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use uma data no formato AAAA-MM-DD.");
+const preciseMoney = <T extends z.ZodType<number>>(schema: T) => schema.refine((value) => {
+  try { moneyToCents(value); return true; } catch { return false; }
+}, "Use no máximo duas casas decimais.");
+const legacyMoneySchema = preciseMoney(z.coerce.number().finite().nonnegative().max(100_000_000));
+const positiveLegacyMoneySchema = preciseMoney(z.coerce.number().finite().positive().max(100_000_000));
+const signedLegacyMoneySchema = preciseMoney(z.coerce.number().finite().min(-100_000_000).max(100_000_000));
 const launchSchema = z.object({
   type: z.enum(["entrada", "conta", "parcela"]),
   name: z.string().trim().min(2).max(120),
-  amount: z.coerce.number().finite().nonnegative().max(100_000_000),
+  amount: legacyMoneySchema,
   dueDate: dateSchema,
   installmentsRemaining: z.coerce.number().int().positive().max(600).optional(),
   category: z.string().trim().max(60).optional().nullable(),
@@ -21,24 +29,24 @@ const launchSchema = z.object({
 const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(8).max(200) });
 const registerSchema = loginSchema.extend({ name: z.string().trim().min(2).max(120) });
 const profileSchema = z.object({
-  monthlyIncome: z.coerce.number().finite().nonnegative().max(100_000_000),
+  monthlyIncome: legacyMoneySchema,
   incomeFrequency: z.enum(["monthly", "biweekly", "weekly", "irregular"]),
   nextIncomeDate: dateSchema.nullable(),
-  currentBalance: z.coerce.number().finite().min(-100_000_000).max(100_000_000),
+  currentBalance: signedLegacyMoneySchema,
   balanceAsOfDate: dateSchema,
-  safetyMargin: z.coerce.number().finite().nonnegative().max(100_000_000),
+  safetyMargin: legacyMoneySchema,
 });
 const recurringSchema = z.object({
   kind: z.enum(["entrada", "conta"]),
   name: z.string().trim().min(2).max(120),
-  amount: z.coerce.number().finite().nonnegative().max(100_000_000),
+  amount: legacyMoneySchema,
   dueDay: z.coerce.number().int().min(1).max(31),
   startDate: dateSchema,
   category: z.string().trim().max(60).optional().nullable(),
 });
 const purchaseSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  totalAmount: z.coerce.number().finite().positive().max(100_000_000),
+  totalAmount: positiveLegacyMoneySchema,
   installmentCount: z.coerce.number().int().positive().max(600),
   firstDueDate: dateSchema,
   category: z.string().trim().max(60).optional().nullable(),
@@ -46,8 +54,8 @@ const purchaseSchema = z.object({
 const debtSchema = z.object({
   name: z.string().trim().min(2).max(120),
   creditor: z.string().trim().max(120).optional().nullable(),
-  balance: z.coerce.number().finite().nonnegative().max(100_000_000),
-  installment: z.coerce.number().finite().nonnegative().max(100_000_000).default(0),
+  balance: legacyMoneySchema,
+  installment: legacyMoneySchema.default(0),
   dueDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
   interestRate: z.coerce.number().finite().nonnegative().max(100_000).optional().nullable(),
   priority: z.enum(["essential", "high", "normal", "low"]).default("normal"),
@@ -55,8 +63,8 @@ const debtSchema = z.object({
   notes: z.string().trim().max(1000).optional().nullable(),
 });
 const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Use um mês no formato AAAA-MM.");
-const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: z.coerce.number().finite().nonnegative().max(100_000_000) });
-const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: z.coerce.number().finite().positive().max(100_000_000), current: z.coerce.number().finite().nonnegative().max(100_000_000).default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
+const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: legacyMoneySchema });
+const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: positiveLegacyMoneySchema, current: legacyMoneySchema.default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
 const changePasswordSchema = z.object({ currentPassword: z.string().min(8).max(200), newPassword: z.string().min(8).max(200) });
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
@@ -78,7 +86,7 @@ function validDate(value: string) {
 }
 
 function cents(amount: number) {
-  return Math.round(amount * 100);
+  return moneyToCents(amount);
 }
 
 function money(amountCents: number) {
@@ -185,8 +193,8 @@ async function recordAudit(actorUserId: string | null, targetUserId: string | nu
   );
 }
 
-async function generateRecurringLaunches(userId: string, recurringId: string) {
-  const source = await getDb().query("SELECT kind, name, amount_cents, due_day, start_date, category FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
+async function generateRecurringLaunches(client: PoolClient, userId: string, recurringId: string) {
+  const source = await client.query("SELECT kind, name, amount_cents, due_day, start_date, category FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
   if (!source.rowCount) return;
   const row = source.rows[0];
   const today = todayIso();
@@ -194,10 +202,10 @@ async function generateRecurringLaunches(userId: string, recurringId: string) {
   while (firstDue < today) firstDue = addMonthsKeepingDay(firstDue, 1, Number(row.due_day));
   for (let index = 0; index < 24; index += 1) {
     const dueDate = addMonthsKeepingDay(firstDue, index, Number(row.due_day));
-    await getDb().query(
+    await client.query(
       `INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, recurring_id, category)
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8
-       WHERE NOT EXISTS (SELECT 1 FROM financial_launches WHERE recurring_id = $7 AND due_date = $6)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (recurring_id, due_date) WHERE recurring_id IS NOT NULL DO NOTHING`,
       [randomUUID(), userId, row.kind === "entrada" ? "entrada" : "conta", row.name, row.amount_cents, dueDate, recurringId, row.category ?? null],
     );
   }
@@ -332,12 +340,13 @@ router.put("/profile", requireAuth, asyncRoute(async (request, response) => {
     return;
   }
   const data = parsed.data;
+  const normalizedIncome = normalizeMonthlyIncomeCents(cents(data.monthlyIncome), data.incomeFrequency, data.incomeFrequency === "irregular" ? cents(data.monthlyIncome) : null);
   const result = await getDb().query(
-    `INSERT INTO user_profiles (user_id, monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, onboarding_completed, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())
-     ON CONFLICT (user_id) DO UPDATE SET monthly_income_cents = EXCLUDED.monthly_income_cents, income_frequency = EXCLUDED.income_frequency, next_income_date = EXCLUDED.next_income_date, current_balance_cents = EXCLUDED.current_balance_cents, balance_as_of_date = EXCLUDED.balance_as_of_date, safety_margin_cents = EXCLUDED.safety_margin_cents, onboarding_completed = TRUE, updated_at = NOW()
+    `INSERT INTO user_profiles (user_id, monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, normalized_monthly_income_cents, conservative_monthly_income_cents, onboarding_completed, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, TRUE, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET monthly_income_cents = EXCLUDED.monthly_income_cents, income_frequency = EXCLUDED.income_frequency, next_income_date = EXCLUDED.next_income_date, current_balance_cents = EXCLUDED.current_balance_cents, balance_as_of_date = EXCLUDED.balance_as_of_date, safety_margin_cents = EXCLUDED.safety_margin_cents, normalized_monthly_income_cents = EXCLUDED.normalized_monthly_income_cents, conservative_monthly_income_cents = EXCLUDED.conservative_monthly_income_cents, onboarding_completed = TRUE, updated_at = NOW()
      RETURNING monthly_income_cents, income_frequency, next_income_date, current_balance_cents, balance_as_of_date, safety_margin_cents, onboarding_completed`,
-    [request.user!.id, cents(data.monthlyIncome), data.incomeFrequency, data.nextIncomeDate, cents(data.currentBalance), data.balanceAsOfDate, cents(data.safetyMargin)],
+    [request.user!.id, cents(data.monthlyIncome), data.incomeFrequency, data.nextIncomeDate, cents(data.currentBalance), data.balanceAsOfDate, cents(data.safetyMargin), normalizedIncome.monthlyIncomeCents],
   );
   await recordAudit(request.user!.id, request.user!.id, "financial_profile_updated");
   response.json({ profile: serializeProfile(result.rows[0]) });
@@ -356,15 +365,18 @@ router.post("/recurring", requireAuth, asyncRoute(async (request, response) => {
   }
   const data = parsed.data;
   const recurringId = randomUUID();
-  const result = await getDb().query(
-    `INSERT INTO recurring_commitments (id, user_id, kind, name, amount_cents, due_day, start_date, category)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id, kind, name, amount_cents, due_day, start_date, category, active`,
-    [recurringId, request.user!.id, data.kind, data.name, cents(data.amount), data.dueDay, data.startDate, data.category ?? null],
-  );
-  await generateRecurringLaunches(request.user!.id, recurringId);
-  await recordAudit(request.user!.id, request.user!.id, "recurring_commitment_created", { recurringId });
-  response.status(201).json({ recurring: serializeRecurring(result.rows[0]) });
+  const row = await withTransaction(async (client) => {
+    const result = await client.query(
+      `INSERT INTO recurring_commitments (id, user_id, kind, name, amount_cents, due_day, start_date, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, kind, name, amount_cents, due_day, start_date, category, active`,
+      [recurringId, request.user!.id, data.kind, data.name, cents(data.amount), data.dueDay, data.startDate, data.category ?? null],
+    );
+    await generateRecurringLaunches(client, request.user!.id, recurringId);
+    await client.query("INSERT INTO audit_logs (id, actor_user_id, target_user_id, action, metadata) VALUES ($1,$2,$2,'recurring_commitment_created',$3::jsonb)", [randomUUID(), request.user!.id, JSON.stringify({ recurringId })]);
+    return result.rows[0];
+  });
+  response.status(201).json({ recurring: serializeRecurring(row) });
 }));
 
 router.patch("/recurring/:id", requireAuth, asyncRoute(async (request, response) => {
@@ -373,12 +385,15 @@ router.patch("/recurring/:id", requireAuth, asyncRoute(async (request, response)
     response.status(400).json({ message: "Informe um estado válido para o compromisso." });
     return;
   }
-  const result = await getDb().query("UPDATE recurring_commitments SET active = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, kind, name, amount_cents, due_day, start_date, category, active", [request.params.id, request.user!.id, parsed.data.active]);
+  const result = await withTransaction(async (client) => {
+    const updated = await client.query("UPDATE recurring_commitments SET active = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, kind, name, amount_cents, due_day, start_date, category, active", [request.params.id, request.user!.id, parsed.data.active]);
+    if (updated.rowCount && parsed.data.active) await generateRecurringLaunches(client, request.user!.id, request.params.id);
+    return updated;
+  });
   if (!result.rowCount) {
     response.status(404).json({ message: "Compromisso recorrente não encontrado." });
     return;
   }
-  if (parsed.data.active) await generateRecurringLaunches(request.user!.id, request.params.id);
   response.json({ recurring: serializeRecurring(result.rows[0]) });
 }));
 
@@ -428,6 +443,10 @@ router.patch("/purchase-installments/:id", requireAuth, asyncRoute(async (reques
   }
   response.json({ installment: result });
 }));
+
+// The recovery router owns the expanded debt contract and all new diagnosis/recovery APIs.
+// It is mounted before legacy debt handlers so existing clients keep the same core fields.
+router.use(recoveryRouter);
 
 router.get("/debts", requireAuth, asyncRoute(async (request, response) => {
   const result = await getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY CASE priority WHEN 'essential' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, balance_cents DESC", [request.user!.id]);
@@ -534,8 +553,23 @@ router.get("/export", requireAuth, asyncRoute(async (request, response) => {
     getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
     getDb().query("SELECT id, name, target_cents, current_cents, due_date, status, created_at, updated_at FROM financial_goals WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
   ]);
+  await recordAudit(request.user!.id, request.user!.id, "financial_data_exported", { format: "json" });
+  response.setHeader("Cache-Control", "no-store");
   response.setHeader("Content-Disposition", `attachment; filename=meu-dinheiro-no-controle-${todayIso()}.json`);
   response.json({ exportedAt: new Date().toISOString(), profile, launches: launches.rows.map(serializeLaunch), recurring: recurring.rows.map(serializeRecurring), purchases: purchases.rows.map(serializePurchase), debts: debts.rows.map(serializeDebt), goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+}));
+
+router.post("/import/csv/preview", requireAuth, asyncRoute(async (request, response) => {
+  if (typeof request.body?.csv !== "string" || request.body.csv.length > 100_000) { response.status(400).json({ message: "Envie um CSV de até 100 KB." }); return; }
+  try {
+    const rows = parseLaunchCsv(request.body.csv);
+    if (rows.some((row) => !validDate(row.dueDate))) { response.status(400).json({ message: "Existe uma data inválida no CSV." }); return; }
+    const hash = launchCsvHash(request.body.csv);
+    const existing = await getDb().query("SELECT id, row_count, completed_at FROM import_batches WHERE user_id=$1 AND import_type='launch_csv' AND content_hash=$2", [request.user!.id, hash]);
+    response.json({ hash, rows, count: rows.length, alreadyImported: Boolean(existing.rowCount), previousBatch: existing.rows[0] ?? null });
+  } catch (error) {
+    response.status(400).json({ message: error instanceof Error ? error.message : "CSV inválido." });
+  }
 }));
 
 router.post("/import/csv", requireAuth, asyncRoute(async (request, response) => {
@@ -543,13 +577,18 @@ router.post("/import/csv", requireAuth, asyncRoute(async (request, response) => 
   let rows;
   try { rows = parseLaunchCsv(request.body.csv); } catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "CSV inválido." }); return; }
   if (rows.some((row) => !validDate(row.dueDate))) { response.status(400).json({ message: "Existe uma data inválida no CSV." }); return; }
-  await withTransaction(async (client) => {
+  const hash = launchCsvHash(request.body.csv);
+  const result = await withTransaction(async (client) => {
+    const batchId = randomUUID();
+    const batch = await client.query("INSERT INTO import_batches (id,user_id,content_hash,import_type,row_count,status,completed_at) VALUES ($1,$2,$3,'launch_csv',$4,'completed',NOW()) ON CONFLICT (user_id,import_type,content_hash) DO NOTHING RETURNING id", [batchId, request.user!.id, hash, rows.length]);
+    if (!batch.rowCount) return { imported: 0, duplicate: true };
     for (const row of rows) {
-      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, status, paid_at, category) VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 = 'paid' THEN NOW() ELSE NULL END, $8)", [randomUUID(), request.user!.id, row.type, row.name, cents(row.amount), row.dueDate, row.status, row.category]);
+      await client.query("INSERT INTO financial_launches (id, user_id, type, name, amount_cents, due_date, status, paid_at, category, import_batch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 = 'paid' THEN NOW() ELSE NULL END, $8, $9)", [randomUUID(), request.user!.id, row.type, row.name, cents(row.amount), row.dueDate, row.status, row.category, batchId]);
     }
+    await client.query("INSERT INTO audit_logs (id,actor_user_id,target_user_id,action,metadata) VALUES ($1,$2,$2,'launches_imported_csv',$3::jsonb)", [randomUUID(), request.user!.id, JSON.stringify({ batchId, hash, count: rows.length })]);
+    return { imported: rows.length, duplicate: false, batchId };
   });
-  await recordAudit(request.user!.id, request.user!.id, "launches_imported_csv", { count: rows.length });
-  response.status(201).json({ imported: rows.length });
+  response.status(result.duplicate ? 200 : 201).json(result);
 }));
 
 router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
@@ -584,7 +623,7 @@ router.patch("/launches/:id", requireAuth, asyncRoute(async (request, response) 
   const body = z.object({
     status: z.enum(["pending", "paid"]).optional(),
     name: z.string().trim().min(2).max(120).optional(),
-    amount: z.coerce.number().finite().nonnegative().max(100_000_000).optional(),
+    amount: legacyMoneySchema.optional(),
     dueDate: dateSchema.optional(),
     category: z.string().trim().max(60).nullable().optional(),
   }).safeParse(request.body);
@@ -624,7 +663,7 @@ router.delete("/launches/:id", requireAuth, asyncRoute(async (request, response)
 }));
 
 router.post("/simulate", requireAuth, asyncRoute(async (request, response) => {
-  const parsed = z.object({ amount: z.coerce.number().finite().nonnegative(), installments: z.coerce.number().int().positive().max(60), firstDueDate: dateSchema }).safeParse(request.body);
+  const parsed = z.object({ amount: legacyMoneySchema, installments: z.coerce.number().int().positive().max(60), firstDueDate: dateSchema }).safeParse(request.body);
   if (!parsed.success || !validDate(parsed.data.firstDueDate)) {
     response.status(400).json({ message: "Informe valor, parcelas e uma data válida." });
     return;
