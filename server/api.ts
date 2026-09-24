@@ -222,7 +222,32 @@ function serializePurchase(row: Record<string, unknown>) {
 }
 
 function serializeDebt(row: Record<string, unknown>) {
-  return { id: row.id, name: row.name, creditor: row.creditor ?? null, balance: money(Number(row.balance_cents)), installment: money(Number(row.installment_cents)), dueDay: row.due_day == null ? null : Number(row.due_day), interestRate: row.interest_rate == null ? null : Number(row.interest_rate), priority: row.priority, status: row.status, notes: row.notes ?? null, createdAt: row.created_at, updatedAt: row.updated_at };
+  const dueDate = row.due_date as string | Date | null | undefined;
+  return {
+    id: row.id,
+    name: row.name,
+    creditor: row.creditor ?? null,
+    balance: money(Number(row.balance_cents)),
+    installment: money(Number(row.installment_cents)),
+    dueDay: row.due_day == null ? null : Number(row.due_day),
+    interestRate: row.interest_rate == null ? null : Number(row.interest_rate),
+    priority: row.priority,
+    status: row.status,
+    notes: row.notes ?? null,
+    originalAmount: row.original_amount_cents == null ? null : money(Number(row.original_amount_cents)),
+    debtType: row.debt_type ?? null,
+    dueDate: !dueDate ? null : typeof dueDate === "string" ? dueDate.slice(0, 10) : dueDate.toISOString().slice(0, 10),
+    daysOverdue: row.days_overdue == null ? null : Number(row.days_overdue),
+    totalCostRate: row.total_cost_rate == null ? null : Number(row.total_cost_rate),
+    remainingInstallments: row.remaining_installments == null ? null : Number(row.remaining_installments),
+    secured: row.secured ?? null,
+    contractReference: row.contract_reference ?? null,
+    collectionChannel: row.collection_channel ?? null,
+    negativeListing: row.negative_listing ?? null,
+    balanceUpdatedAt: row.balance_updated_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 router.get("/health", asyncRoute(async (_request, response) => {
@@ -545,18 +570,47 @@ router.patch("/notifications/:id/read", requireAuth, asyncRoute(async (request, 
 }));
 
 router.get("/export", requireAuth, asyncRoute(async (request, response) => {
-  const [profile, launches, recurring, purchases, debts, goals] = await Promise.all([
-    getProfile(request.user!.id),
-    getLaunches(request.user!.id),
-    getDb().query("SELECT id, kind, name, amount_cents, due_day, start_date, category, active FROM recurring_commitments WHERE user_id = $1 ORDER BY due_day", [request.user!.id]),
-    getDb().query("SELECT id, name, total_cents, installment_count, first_due_date, category, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
-    getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
-    getDb().query("SELECT id, name, target_cents, current_cents, due_date, status, created_at, updated_at FROM financial_goals WHERE user_id = $1 ORDER BY created_at", [request.user!.id]),
+  const userId = request.user!.id;
+  const [profile, launches, recurring, purchases, purchaseInstallments, debts, essentialExpenses, debtNegotiations, recoveryPlans, recoveryPlanItems, debtPayments, weeklyReviews, actionItems, goals, budgets, importBatches] = await Promise.all([
+    getProfile(userId),
+    getLaunches(userId),
+    getDb().query("SELECT id, kind, name, amount_cents, due_day, start_date, category, active FROM recurring_commitments WHERE user_id = $1 ORDER BY due_day", [userId]),
+    getDb().query("SELECT id, name, total_cents, installment_count, first_due_date, category, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT id, purchase_id, installment_number, amount_cents, due_date, status, paid_at FROM purchase_installments WHERE user_id = $1 ORDER BY due_date, installment_number", [userId]),
+    getDb().query("SELECT * FROM debts WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT id, name, category, monthly_amount_cents, required, active, created_at, updated_at FROM essential_expenses WHERE user_id = $1 ORDER BY category, name", [userId]),
+    getDb().query("SELECT * FROM debt_negotiations WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT * FROM recovery_plans WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT * FROM recovery_plan_items WHERE user_id = $1 ORDER BY plan_id, sequence", [userId]),
+    getDb().query("SELECT * FROM debt_payments WHERE user_id = $1 ORDER BY paid_on, created_at", [userId]),
+    getDb().query("SELECT * FROM weekly_reviews WHERE user_id = $1 ORDER BY week_start", [userId]),
+    getDb().query("SELECT * FROM action_items WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT id, name, target_cents, current_cents, due_date, status, created_at, updated_at FROM financial_goals WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT id, category, month, limit_cents FROM budget_limits WHERE user_id = $1 ORDER BY month, category", [userId]),
+    getDb().query("SELECT id, content_hash, import_type, row_count, status, created_at, completed_at FROM import_batches WHERE user_id = $1 ORDER BY created_at", [userId]),
   ]);
   await recordAudit(request.user!.id, request.user!.id, "financial_data_exported", { format: "json" });
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("Content-Disposition", `attachment; filename=meu-dinheiro-no-controle-${todayIso()}.json`);
-  response.json({ exportedAt: new Date().toISOString(), profile, launches: launches.rows.map(serializeLaunch), recurring: recurring.rows.map(serializeRecurring), purchases: purchases.rows.map(serializePurchase), debts: debts.rows.map(serializeDebt), goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })) });
+  response.json({
+    exportedAt: new Date().toISOString(),
+    profile,
+    launches: launches.rows.map(serializeLaunch),
+    recurring: recurring.rows.map(serializeRecurring),
+    purchases: purchases.rows.map(serializePurchase),
+    purchaseInstallments: purchaseInstallments.rows,
+    debts: debts.rows.map(serializeDebt),
+    essentialExpenses: essentialExpenses.rows,
+    debtNegotiations: debtNegotiations.rows,
+    recoveryPlans: recoveryPlans.rows,
+    recoveryPlanItems: recoveryPlanItems.rows,
+    debtPayments: debtPayments.rows,
+    weeklyReviews: weeklyReviews.rows,
+    actionItems: actionItems.rows,
+    goals: goals.rows.map((row) => ({ id: row.id, name: row.name, target: money(Number(row.target_cents)), current: money(Number(row.current_cents)), dueDate: row.due_date, status: row.status })),
+    budgets: budgets.rows,
+    importBatches: importBatches.rows,
+  });
 }));
 
 router.post("/import/csv/preview", requireAuth, asyncRoute(async (request, response) => {

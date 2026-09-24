@@ -1,30 +1,53 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Check, CircleHelp, HandCoins, Plus, ShieldAlert, Target } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Banknote, Handshake, Map, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Debt } from "../lib/api";
+import DebtMap, { money } from "../components/recovery/DebtMap";
+import DebtNegotiations from "../components/recovery/DebtNegotiations";
+import RecoveryPlanPanel from "../components/recovery/RecoveryPlanPanel";
+import DebtPayments from "../components/recovery/DebtPayments";
+import WeeklyReview from "../components/recovery/WeeklyReview";
 
-const money = (value: number) => value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const emptyForm = { name: "", creditor: "", balance: "", installment: "", priority: "normal" as Debt["priority"], status: "open" as Debt["status"], notes: "" };
+type RecoveryTab = "map" | "negotiation" | "plan" | "payments";
+const tabs: Array<{ id: RecoveryTab; label: string; detail: string; icon: typeof Map }> = [
+  { id: "map", label: "Mapa", detail: "entender e priorizar", icon: Map },
+  { id: "negotiation", label: "Negociação", detail: "registrar propostas", icon: Handshake },
+  { id: "plan", label: "Plano", detail: "definir valores possíveis", icon: RefreshCw },
+  { id: "payments", label: "Pagamentos", detail: "acompanhar o saldo", icon: Banknote },
+];
 
-export default function Debts() {
+export default function Debts({ initialDebtId = null }: { initialDebtId?: string | null }) {
   const [debts, setDebts] = useState<Debt[]>([]);
-  const [form, setForm] = useState(emptyForm);
+  const [selectedId, setSelectedId] = useState<string | null>(initialDebtId);
+  const [tab, setTab] = useState<RecoveryTab>(initialDebtId ? "negotiation" : "map");
   const [loading, setLoading] = useState(true);
-  async function reload() { try { setDebts((await api.debts()).debts); } catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível carregar suas dívidas."); } finally { setLoading(false); } }
-  useEffect(() => { reload(); }, []);
-  const openDebts = debts.filter((debt) => debt.status !== "paid");
-  const totalBalance = openDebts.reduce((sum, debt) => sum + debt.balance, 0);
-  const monthlyCommitment = openDebts.reduce((sum, debt) => sum + debt.installment, 0);
-  const priorities = { essential: "essencial", high: "alta", normal: "normal", low: "baixa" };
-  const advice = useMemo(() => {
-    if (!openDebts.length) return { title: "Você não tem dívidas abertas cadastradas.", text: "Continue registrando compromissos para tomar decisões antes que eles se acumulem." };
-    const essential = openDebts.find((debt) => debt.priority === "essential");
-    if (essential) return { title: `Comece por ${essential.name}.`, text: "Compromissos essenciais vêm primeiro porque podem afetar moradia, alimentação, saúde ou serviços básicos." };
-    const high = openDebts.find((debt) => debt.priority === "high");
-    return { title: `Defina um próximo passo para ${high?.name ?? openDebts[0].name}.`, text: "Organize uma negociação possível sem deixar sua margem de segurança sem cobertura." };
-  }, [openDebts]);
-  async function addDebt(event: FormEvent) { event.preventDefault(); try { await api.addDebt({ ...form, balance: Number(form.balance), installment: Number(form.installment) || 0, creditor: form.creditor || null, notes: form.notes || null }); toast.success("Dívida adicionada ao seu plano."); setForm(emptyForm); await reload(); } catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível adicionar a dívida."); } }
-  async function updateStatus(debt: Debt, status: Debt["status"]) { try { await api.updateDebt(debt.id, { status }); toast.success(status === "paid" ? "Dívida marcada como quitada." : "Status atualizado."); await reload(); } catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível atualizar a dívida."); } }
-  if (loading) return <div className="page-stack"><div className="auth-loading">Carregando seu plano de recuperação...</div></div>;
-  return <div className="page-stack page-enter"><div className="section-heading"><div><div className="eyebrow">recuperar sem se perder</div><h1>Plano de dívidas</h1></div><p className="section-detail">Enxergar o total é o primeiro passo para escolher o próximo movimento.</p></div><section className="debt-summary"><div className="debt-summary-copy"><span className="eyebrow">visão honesta, sem julgamento</span><h2>{advice.title}</h2><p>{advice.text}</p></div><div className="debt-summary-metrics"><div><span>dívidas abertas</span><strong>{openDebts.length}</strong></div><div><span>saldo total</span><strong>{money(totalBalance)}</strong></div><div><span>compromisso mensal</span><strong>{money(monthlyCommitment)}</strong></div></div></section><div className="debt-layout"><section className="panel planning-form-panel"><div className="panel-heading"><div><span className="eyebrow">comece pelo que existe</span><h2><Plus size={17} /> Adicionar dívida</h2></div></div><form className="compact-form" onSubmit={addDebt}><label>nome da dívida<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Cartão, empréstimo..." /></label><label>credor<input value={form.creditor} onChange={(event) => setForm({ ...form, creditor: event.target.value })} placeholder="Banco ou empresa" /></label><div className="form-two-col"><label>saldo devedor<span className="input-wrap"><span>R$</span><input required type="number" min="0" step="0.01" value={form.balance} onChange={(event) => setForm({ ...form, balance: event.target.value })} /></span></label><label>parcela mensal<span className="input-wrap"><span>R$</span><input type="number" min="0" step="0.01" value={form.installment} onChange={(event) => setForm({ ...form, installment: event.target.value })} /></span></label></div><label>prioridade<select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as Debt["priority"] })}>{Object.entries(priorities).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>observação<textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="O que você já sabe sobre essa dívida?" /></label><button className="primary-button" type="submit"><Plus size={16} /> adicionar ao plano</button></form></section><section className="panel debt-list-panel"><div className="panel-heading"><div><span className="eyebrow">ordem de atenção</span><h2>Suas dívidas</h2></div><ShieldAlert size={18} className="sparkle-icon" /></div>{debts.length === 0 ? <div className="empty-state compact"><HandCoins size={24} /><strong>Nenhuma dívida cadastrada</strong><span>Quando você cadastrar, ajudaremos a organizar prioridades.</span></div> : <div className="debt-list">{debts.map((debt) => <div className={`debt-row debt-${debt.status}`} key={debt.id}><div className="debt-icon"><HandCoins size={16} /></div><div className="debt-main"><div className="debt-title"><strong>{debt.name}</strong><span className={`priority-pill priority-${debt.priority}`}>{priorities[debt.priority]}</span></div><span>{debt.creditor || "credor não informado"} · {debt.installment ? `${money(debt.installment)}/mês` : "parcela não informada"}</span><div className="debt-progress"><span style={{ width: `${debt.status === "paid" ? 100 : Math.max(4, Math.min(100, (1 - debt.balance / Math.max(debt.balance + debt.installment * 12, 1)) * 100))}%` }} /></div></div><div className="debt-side"><strong>{money(debt.balance)}</strong>{debt.status === "paid" ? <span className="paid-label"><Check size={12} /> quitada</span> : <select value={debt.status} onChange={(event) => updateStatus(debt, event.target.value as Debt["status"])}><option value="open">aberta</option><option value="negotiating">negociando</option><option value="paid">marcar quitada</option></select>}</div></div>)}</div>}<div className="debt-note"><CircleHelp size={15} /><span>Priorizar não significa ignorar as outras dívidas. Preserve primeiro moradia, alimentação, saúde e serviços essenciais.</span><ArrowRight size={15} /></div></section></div><section className="recovery-steps"><div><Target size={18} /><strong>Próximo ciclo</strong><span>Depois de cadastrar tudo, compare o total mensal com sua margem de segurança e escolha uma dívida para acompanhar esta semana.</span></div></section></div>;
+  const [error, setError] = useState<string | null>(null);
+  async function reload() {
+    setError(null);
+    try {
+      const result = await api.debts(); setDebts(result.debts);
+      setSelectedId((current) => current && result.debts.some((debt) => debt.id === current) ? current : result.debts.find((debt) => debt.status !== "paid")?.id ?? result.debts[0]?.id ?? null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível carregar suas dívidas."); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { void reload(); }, []);
+  useEffect(() => { if (initialDebtId) { setSelectedId(initialDebtId); setTab("negotiation"); } }, [initialDebtId]);
+  const open = useMemo(() => debts.filter((debt) => debt.status !== "paid"), [debts]);
+  const total = open.reduce((sum, debt) => sum + debt.balance, 0);
+  const selected = debts.find((debt) => debt.id === selectedId);
+
+  if (loading) return <div className="page-stack"><div className="auth-loading" role="status">Carregando sua jornada de recuperação...</div></div>;
+  if (error) return <div className="persistent-error" role="alert"><strong>Não foi possível abrir sua jornada de dívidas.</strong><span>{error}</span><button className="primary-button" type="button" onClick={() => { setLoading(true); void reload(); }}>Tentar novamente</button></div>;
+  return <div className="page-stack page-enter">
+    <div className="section-heading"><div><div className="eyebrow">recuperar com passos possíveis</div><h1>Jornada de dívidas</h1></div><p className="section-detail">Organize o que existe, registre conversas e pague no ritmo que sua realidade comporta.</p></div>
+    <section className="debt-summary"><div className="debt-summary-copy"><span className="eyebrow">sem julgamento e sem promessas</span><h2>{selected ? `Próximo foco: ${selected.name}` : "Comece mapeando uma dívida."}</h2><p>{selected?.prioritization?.reasons?.length ? selected.prioritization.reasons.join("; ") : "A prioridade usa apenas os dados informados. Campos ausentes permanecem ausentes."}</p></div><div className="debt-summary-metrics"><div><span>dívidas abertas</span><strong>{open.length}</strong></div><div><span>saldo conhecido</span><strong>{money(total)}</strong></div><div><span>selecionada</span><strong>{selected?.prioritization?.rank ? `#${selected.prioritization.rank}` : "—"}</strong></div></div></section>
+    <nav className="recovery-tabs" aria-label="Etapas da jornada de dívidas">{tabs.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "step" : undefined}><Icon size={18} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>; })}</nav>
+    {tab === "map" && <DebtMap debts={debts} selectedId={selectedId} onSelect={setSelectedId} onChanged={reload} onNext={() => setTab("negotiation")} />}
+    {tab === "negotiation" && <DebtNegotiations debts={debts} selectedId={selectedId} onSelect={setSelectedId} onChanged={reload} />}
+    {tab === "plan" && <RecoveryPlanPanel debts={debts} />}
+    {tab === "payments" && <DebtPayments debts={debts} selectedId={selectedId} onSelect={setSelectedId} onChanged={reload} />}
+    <WeeklyReview debts={debts} />
+  </div>;
 }
+
+export function showDebtLoadError(error: unknown) { toast.error(error instanceof Error ? error.message : "Não foi possível carregar suas dívidas."); }

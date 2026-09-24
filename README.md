@@ -15,10 +15,17 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Contas e entradas recorrentes com geração de vencimentos futuros.
 - Compras parceladas agrupadas com parcelas individuais e marcação de pagamento.
 - Plano de dívidas com saldo, parcela, prioridade, negociação e quitação.
+- Diagnóstico financeiro completo com frequência de renda, dependentes, compromissos, piso essencial e capacidade segura conservadora.
+- Orçamento essencial editável por categoria, com ativação e exclusão de itens.
+- Mapa de dívidas ampliado, completude de dados e priorização explicável sem presumir juros ou condições ausentes.
+- Histórico de negociações com oferta, entrada, parcelas, encargos, validade, decisão e observações.
+- Plano de recuperação protegido por capacidade: um plano acima do valor seguro não pode ser ativado.
+- Pagamentos parciais com saldo anterior/posterior, quitação automática somente no saldo zero e estorno auditado.
+- Revisão semanal e ações independentes, com estados aberto, adiado e resolvido.
 - Visão mensal com planejado versus realizado, categorias, limites e metas.
 - Simulador comparativo com diferentes prazos e menor saldo projetado.
 - Central de notificações internas baseada em alertas financeiros reais.
-- Troca segura de senha, exportação JSON e importação de lançamentos CSV.
+- Troca segura de senha, exportação JSON completa e importação de lançamentos CSV com preview e idempotência por hash.
 - Rate limiting de login e verificação de origem nas operações de escrita em produção.
 - PWA instalável com manifesto, ícones, atalho de tela inicial e cache seguro do app shell.
 - Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
@@ -45,6 +52,7 @@ client/              React, telas e cliente HTTP
 client/public/       manifesto, ícones e service worker da PWA
 server/index.ts      servidor Express e arquivos estáticos
 server/api.ts        autenticação, API financeira e API administrativa
+server/recovery.ts   diagnóstico, dívidas, negociação, plano, pagamentos e revisão semanal
 server/auth.ts       sessões, cookies e autorização por papel
 server/db.ts         pool PostgreSQL
 server/migrations.ts schema inicial e migrações
@@ -106,16 +114,25 @@ A API estará disponível no mesmo host do frontend:
 - `PATCH/DELETE /api/launches/:id`
 - `POST /api/simulate`
 - `GET/PUT /api/profile`
+- `GET/PUT /api/diagnosis`
+- `GET/POST/PATCH/DELETE /api/essential-expenses`
 - `GET/POST/PATCH /api/recurring`
 - `GET/POST /api/purchases`
 - `PATCH /api/purchase-installments/:id`
 - `GET/POST/PATCH /api/debts`
+- `GET/POST/PATCH /api/debts/:id/negotiations`
+- `GET/POST/PATCH /api/recovery-plans`
+- `POST /api/recovery-plans/:id/activate` e `/recalculate`
+- `GET/POST /api/debts/:id/payments`
+- `POST /api/debts/:id/payments/:paymentId/reverse`
+- `GET/POST/PATCH /api/weekly-reviews`
+- `GET/PATCH /api/actions`
 - `GET /api/monthly?month=AAAA-MM`
 - `POST/DELETE /api/budgets`
 - `GET/POST/PATCH /api/goals`
 - `GET/PATCH /api/notifications`
 - `POST /api/auth/change-password`
-- `GET /api/export` e `POST /api/import/csv`
+- `GET /api/export`, `POST /api/import/csv/preview` e `POST /api/import/csv`
 - `GET /api/admin/metrics`
 - `GET /api/admin/users`
 - `GET /api/admin/users/:id`
@@ -136,7 +153,7 @@ O arquivo `render.yaml` foi preparado para o serviço web na branch `projeto`.
 4. Faça o deploy pelo Blueprint ou sincronize o `render.yaml`.
 5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta esperada é `{"ok":true,"database":"connected"}`.
 
-O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, limites, metas e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
+O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, despesas essenciais, negociações, planos de recuperação, pagamentos, revisões, ações, limites, metas, importações e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
 
 A URL do banco deve ser configurada apenas no Render ou em um `.env` ignorado localmente. Nunca coloque credenciais no GitHub, no frontend, no README ou em logs.
 
@@ -146,14 +163,15 @@ O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas 
 
 A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
 
-O produto já inclui troca de senha autenticada, exportação JSON, importação CSV, categorias livres, recorrência automática e notificações internas. A recuperação de senha por e-mail, convites com envio de e-mail, integração bancária/Open Finance e Row-Level Security do PostgreSQL ainda dependem da escolha de um provedor de e-mail/bancário e devem ser ativados antes de uma operação pública em escala.
+O produto já inclui troca de senha autenticada, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados e notificações internas. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. Recuperação de senha por e-mail, convites com envio de e-mail, integração bancária/Open Finance e Row-Level Security do PostgreSQL ainda dependem da escolha de provedores e devem ser ativados antes de uma operação pública em escala.
 
 ## Validação
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm check
+pnpm test
 pnpm build
 ```
 
-Antes de usar dados reais, valide pelo menos dois usuários distintos, incluindo leitura, edição e exclusão cruzadas, acesso sem autenticação, permissões administrativas e bloqueio de usuário inativo.
+O release de recuperação também deve ser validado em um PostgreSQL descartável, percorrendo diagnóstico, despesas essenciais, dívida, negociação, plano, pagamento, revisão semanal, importação idempotente e exportação. Antes de usar dados reais, valide pelo menos dois usuários distintos, incluindo leitura, edição e exclusão cruzadas, acesso sem autenticação, permissões administrativas e bloqueio de usuário inativo.
