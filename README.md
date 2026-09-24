@@ -20,6 +20,7 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Central de notificações internas baseada em alertas financeiros reais.
 - Troca segura de senha, exportação JSON e importação de lançamentos CSV.
 - Rate limiting de login e verificação de origem nas operações de escrita em produção.
+- PWA instalável com manifesto, ícones, atalho de tela inicial e cache seguro do app shell.
 - Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
 - Métricas reais de usuários e lançamentos.
 - Consulta de clientes e detalhe dos lançamentos de cada conta.
@@ -41,6 +42,7 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 
 ```text
 client/              React, telas e cliente HTTP
+client/public/       manifesto, ícones e service worker da PWA
 server/index.ts      servidor Express e arquivos estáticos
 server/api.ts        autenticação, API financeira e API administrativa
 server/auth.ts       sessões, cookies e autorização por papel
@@ -81,6 +83,16 @@ pnpm check
 pnpm build
 pnpm start
 ```
+
+## Instalar como aplicativo (PWA)
+
+Depois que o deploy estiver publicado em `https://meu-dinheiro-no-controle.onrender.com`, abra a URL pelo navegador do celular.
+
+No Android com Chrome, aguarde o aviso **Leve seu controle com você** e toque em **instalar agora**. Também é possível abrir o menu do navegador e escolher **Instalar aplicativo** ou **Adicionar à tela inicial**.
+
+No iPhone ou iPad, abra pelo Safari, toque em **Compartilhar**, escolha **Adicionar à Tela de Início** e confirme. O iOS não exibe o mesmo botão automático do Chrome, por isso a própria aplicação mostra essa orientação.
+
+A PWA usa `display: standalone`, ícones próprios e uma tela inicial cacheada. O service worker não armazena respostas de `/api` e não mantém dados financeiros offline; as consultas autenticadas continuam protegidas pelo backend do Render.
 
 A API estará disponível no mesmo host do frontend:
 

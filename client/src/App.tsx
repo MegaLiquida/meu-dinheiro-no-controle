@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Admin from "./pages/Admin";
@@ -37,6 +38,7 @@ function App() {
           <TooltipProvider>
             <Toaster position="bottom-right" />
             <ProtectedApp />
+            <PwaInstallPrompt />
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>
