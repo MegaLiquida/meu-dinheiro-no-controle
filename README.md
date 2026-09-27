@@ -26,6 +26,7 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Simulador comparativo com diferentes prazos e menor saldo projetado.
 - Central de notificações internas baseada em alertas financeiros reais.
 - Troca segura de senha, exportação JSON completa e importação de lançamentos CSV com preview e idempotência por hash.
+- Fundação de conexões Open Finance por usuário, transações importadas com deduplicação por identificador externo e revisão antes de criar lançamentos.
 - Rate limiting de login e verificação de origem nas operações de escrita em produção.
 - PWA instalável com manifesto, ícones, atalho de tela inicial e cache seguro do app shell.
 - Painel administrativo protegido por papel (`support`, `admin` ou `owner`).
@@ -57,6 +58,7 @@ server/auth.ts       sessões, cookies e autorização por papel
 server/db.ts         pool PostgreSQL
 server/migrations.ts schema inicial e migrações
 server/domain.ts     saldo projetado e simulador
+server/openfinance.ts ingestão idempotente e conciliação de transações externas
 shared/              constantes compartilhadas
 render.yaml          configuração do serviço no Render
 ```
@@ -131,6 +133,8 @@ A API estará disponível no mesmo host do frontend:
 - `POST/DELETE /api/budgets`
 - `GET/POST/PATCH /api/goals`
 - `GET/PATCH /api/notifications`
+- `GET /api/connections` e `GET /api/imported-transactions`
+- `POST /api/imported-transactions/:id/accept` e `PATCH /api/imported-transactions/:id/review`
 - `POST /api/auth/change-password`
 - `GET /api/export`, `POST /api/import/csv/preview` e `POST /api/import/csv`
 - `GET /api/admin/metrics`
@@ -163,7 +167,7 @@ O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas 
 
 A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
 
-O produto já inclui troca de senha autenticada, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados e notificações internas. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. Recuperação de senha por e-mail, convites com envio de e-mail, integração bancária/Open Finance e Row-Level Security do PostgreSQL ainda dependem da escolha de provedores e devem ser ativados antes de uma operação pública em escala.
+O produto já inclui troca de senha autenticada, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados, notificações internas e a fundação de ingestão Open Finance. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. A fundação Open Finance não ativa nenhum banco automaticamente: o provedor ainda precisa ser escolhido, contratado e configurado com consentimento, URLs de retorno e segredos exclusivamente no Render. O sistema não armazena senhas bancárias; transações externas entram como pendentes e só viram lançamentos após revisão do usuário. Recuperação de senha por e-mail, convites com envio de e-mail e Row-Level Security do PostgreSQL ainda devem ser ativados antes de uma operação pública em escala.
 
 ## Validação
 

@@ -385,6 +385,53 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS import_batches_user_created_idx ON import_batches(user_id, created_at DESC);
     `,
   },
+  {
+    name: "007_open_finance_foundation",
+    sql: `
+      CREATE TABLE IF NOT EXISTS financial_connections (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK (provider IN ('pluggy', 'belvo', 'android_notification')),
+        provider_item_id TEXT,
+        institution_name TEXT NOT NULL,
+        account_label TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'needs_reauth', 'error', 'revoked', 'disconnected')),
+        consent_status TEXT NOT NULL DEFAULT 'pending' CHECK (consent_status IN ('pending', 'active', 'expired', 'revoked')),
+        last_synced_at TIMESTAMPTZ,
+        consent_expires_at TIMESTAMPTZ,
+        error_message TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, provider, provider_item_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS imported_transactions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        connection_id TEXT NOT NULL REFERENCES financial_connections(id) ON DELETE CASCADE,
+        external_transaction_id TEXT NOT NULL,
+        external_account_id TEXT,
+        direction TEXT NOT NULL CHECK (direction IN ('inflow', 'outflow')),
+        amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+        transaction_date DATE NOT NULL,
+        description TEXT NOT NULL,
+        merchant_name TEXT,
+        category TEXT,
+        provider_status TEXT,
+        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'accepted', 'ignored', 'reversed')),
+        fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^[a-f0-9]{64}$'),
+        financial_launch_id TEXT UNIQUE REFERENCES financial_launches(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (connection_id, external_transaction_id)
+      );
+
+      ALTER TABLE financial_launches ADD COLUMN IF NOT EXISTS imported_transaction_id TEXT UNIQUE REFERENCES imported_transactions(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS financial_connections_user_status_idx ON financial_connections(user_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS imported_transactions_user_state_idx ON imported_transactions(user_id, state, transaction_date DESC);
+      CREATE INDEX IF NOT EXISTS imported_transactions_connection_date_idx ON imported_transactions(connection_id, transaction_date DESC);
+    `,
+  },
 ];
 
 export async function runMigrations(pool: Pool) {

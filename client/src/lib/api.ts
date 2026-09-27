@@ -227,6 +227,8 @@ export type WeeklyReviewInput = {
 };
 export type CsvPreviewRow = { type: LaunchType; name: string; amount: number; dueDate: string; category: string | null; status: LaunchStatus };
 export type CsvPreview = { hash: string; rows: CsvPreviewRow[]; count: number; alreadyImported: boolean; previousBatch: { id: string; row_count: number; completed_at: string } | null };
+export type FinancialConnection = { id: string; provider: string; institutionName: string; accountLabel: string | null; status: string; statusLabel: string; consentStatus: string; lastSyncedAt: string | null; consentExpiresAt: string | null; errorMessage: string | null; createdAt: string; updatedAt: string };
+export type ImportedTransaction = { id: string; connectionId: string; externalTransactionId: string; direction: "inflow" | "outflow"; amount: number; transactionDate: string; description: string; merchantName: string | null; category: string | null; providerStatus: string | null; state: "pending" | "accepted" | "ignored" | "reversed"; financialLaunchId: string | null; createdAt: string; updatedAt: string };
 
 export type Dashboard = {
   today: string;
@@ -320,6 +322,10 @@ export const api = {
   updateGoal: (id: string, body: Partial<Omit<Goal, "id">>) => request<{ goal: Goal }>(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   notifications: () => request<{ notifications: Notification[]; unread: number }>("/notifications"),
   markNotificationRead: (id: string) => request<{ notification: Notification }>(`/notifications/${id}/read`, { method: "PATCH" }),
+  connections: () => request<{ providerConfigured: boolean; providerSelectionRequired: boolean; connections: FinancialConnection[] }>("/connections"),
+  importedTransactions: (state?: ImportedTransaction["state"]) => request<{ transactions: ImportedTransaction[] }>(`/imported-transactions${state ? `?state=${encodeURIComponent(state)}` : ""}`),
+  acceptImportedTransaction: (id: string) => request<{ transactionId: string; launchId: string; alreadyAccepted: boolean }>(`/imported-transactions/${id}/accept`, { method: "POST", body: JSON.stringify({}) }),
+  reviewImportedTransaction: (id: string, body: { state: "pending" | "ignored"; category?: string | null }) => request<{ transaction: ImportedTransaction }>(`/imported-transactions/${id}/review`, { method: "PATCH", body: JSON.stringify(body) }),
   adminMetrics: () => request<AdminMetrics>("/admin/metrics"),
   adminUsers: (params: { query?: string; status?: string; page?: number; limit?: number } = {}) => request<{ users: User[]; total: number; page: number; limit: number }>(`/admin/users?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== "") as [string, string][]).toString()}`),
   adminUser: (id: string) => request<{ user: User; launches: Launch[] }>(`/admin/users/${id}`),

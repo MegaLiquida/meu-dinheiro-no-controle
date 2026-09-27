@@ -8,6 +8,7 @@ import { buildDashboard, buildSimulation, buildSimulationScenarios, moneyToCents
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
+import { acceptImportedTransaction, updateImportedTransactionReview } from "./openfinance";
 
 const router = Router();
 
@@ -183,6 +184,16 @@ async function syncNotifications(userId: string) {
 
 function serializeNotification(row: Record<string, unknown>) {
   return { id: row.id, tone: row.tone, title: row.title, detail: row.detail, read: Boolean(row.read_at), createdAt: row.created_at };
+}
+
+function serializeFinancialConnection(row: Record<string, unknown>) {
+  const status = String(row.status);
+  const statusLabel = status === "active" ? "ativa" : status === "needs_reauth" ? "precisa renovar autorização" : status === "error" ? "com erro" : status === "revoked" ? "revogada" : "aguardando autorização";
+  return { id: row.id, provider: row.provider, institutionName: row.institution_name, accountLabel: row.account_label ?? null, status, statusLabel, consentStatus: row.consent_status, lastSyncedAt: row.last_synced_at ?? null, consentExpiresAt: row.consent_expires_at ?? null, errorMessage: row.error_message ?? null, createdAt: row.created_at, updatedAt: row.updated_at };
+}
+
+function serializeImportedTransaction(row: Record<string, unknown>) {
+  return { id: row.id, connectionId: row.connection_id, externalTransactionId: row.external_transaction_id, direction: row.direction, amount: money(Number(row.amount_cents)), transactionDate: typeof row.transaction_date === "string" ? row.transaction_date.slice(0, 10) : (row.transaction_date as Date).toISOString().slice(0, 10), description: row.description, merchantName: row.merchant_name ?? null, category: row.category ?? null, providerStatus: row.provider_status ?? null, state: row.state, financialLaunchId: row.financial_launch_id ?? null, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
 async function recordAudit(actorUserId: string | null, targetUserId: string | null, action: string, metadata: Record<string, unknown> = {}) {
@@ -569,11 +580,65 @@ router.patch("/notifications/:id/read", requireAuth, asyncRoute(async (request, 
   response.json({ notification: serializeNotification(result.rows[0]) });
 }));
 
+router.get("/connections", requireAuth, asyncRoute(async (request, response) => {
+  const result = await getDb().query("SELECT id, provider, institution_name, account_label, status, consent_status, last_synced_at, consent_expires_at, error_message, created_at, updated_at FROM financial_connections WHERE user_id=$1 ORDER BY updated_at DESC", [request.user!.id]);
+  response.json({ providerConfigured: false, providerSelectionRequired: true, connections: result.rows.map(serializeFinancialConnection) });
+}));
+
+router.get("/imported-transactions", requireAuth, asyncRoute(async (request, response) => {
+  const state = typeof request.query.state === "string" && ["pending", "accepted", "ignored", "reversed"].includes(request.query.state) ? request.query.state : null;
+  const result = await getDb().query(
+    `SELECT id, connection_id, external_transaction_id, direction, amount_cents, transaction_date, description, merchant_name, category, provider_status, state, financial_launch_id, created_at, updated_at
+       FROM imported_transactions
+      WHERE user_id=$1 AND ($2::text IS NULL OR state=$2)
+      ORDER BY transaction_date DESC, created_at DESC
+      LIMIT 100`,
+    [request.user!.id, state],
+  );
+  response.json({ transactions: result.rows.map(serializeImportedTransaction) });
+}));
+
+router.post("/imported-transactions/:id/accept", requireAuth, asyncRoute(async (request, response) => {
+  let result;
+  try {
+    result = await withTransaction(async (client) => acceptImportedTransaction(client, request.user!.id, request.params.id));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("não pode") || error instanceof Error && error.message.includes("não está aguardando")) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
+    throw error;
+  }
+  if (!result) { response.status(404).json({ message: "Transação importada não encontrada." }); return; }
+  await recordAudit(request.user!.id, request.user!.id, "imported_transaction_accepted", { transactionId: request.params.id, launchId: result.launchId });
+  response.json(result);
+}));
+
+router.patch("/imported-transactions/:id/review", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = z.object({ state: z.enum(["pending", "ignored"]), category: z.string().trim().max(60).nullable().optional() }).safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ message: "Informe uma revisão válida para a transação." }); return; }
+  let row;
+  try {
+    row = await withTransaction(async (client) => updateImportedTransactionReview(client, request.user!.id, request.params.id, parsed.data.state, parsed.data.category));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("não pode")) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
+    throw error;
+  }
+  if (!row) { response.status(404).json({ message: "Transação importada não encontrada." }); return; }
+  await recordAudit(request.user!.id, request.user!.id, "imported_transaction_reviewed", { transactionId: request.params.id, state: parsed.data.state });
+  response.json({ transaction: serializeImportedTransaction(row) });
+}));
+
 router.get("/export", requireAuth, asyncRoute(async (request, response) => {
   const userId = request.user!.id;
-  const [profile, launches, recurring, purchases, purchaseInstallments, debts, essentialExpenses, debtNegotiations, recoveryPlans, recoveryPlanItems, debtPayments, weeklyReviews, actionItems, goals, budgets, importBatches] = await Promise.all([
+  const [profile, launches, connections, importedTransactions, recurring, purchases, purchaseInstallments, debts, essentialExpenses, debtNegotiations, recoveryPlans, recoveryPlanItems, debtPayments, weeklyReviews, actionItems, goals, budgets, importBatches] = await Promise.all([
     getProfile(userId),
     getLaunches(userId),
+    getDb().query("SELECT id, provider, institution_name, account_label, status, consent_status, last_synced_at, consent_expires_at, error_message, created_at, updated_at FROM financial_connections WHERE user_id = $1 ORDER BY created_at", [userId]),
+    getDb().query("SELECT id, connection_id, external_transaction_id, external_account_id, direction, amount_cents, transaction_date, description, merchant_name, category, provider_status, state, financial_launch_id, created_at, updated_at FROM imported_transactions WHERE user_id = $1 ORDER BY transaction_date, created_at", [userId]),
     getDb().query("SELECT id, kind, name, amount_cents, due_day, start_date, category, active FROM recurring_commitments WHERE user_id = $1 ORDER BY due_day", [userId]),
     getDb().query("SELECT id, name, total_cents, installment_count, first_due_date, category, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at", [userId]),
     getDb().query("SELECT id, purchase_id, installment_number, amount_cents, due_date, status, paid_at FROM purchase_installments WHERE user_id = $1 ORDER BY due_date, installment_number", [userId]),
@@ -596,6 +661,8 @@ router.get("/export", requireAuth, asyncRoute(async (request, response) => {
     exportedAt: new Date().toISOString(),
     profile,
     launches: launches.rows.map(serializeLaunch),
+    connections: connections.rows.map(serializeFinancialConnection),
+    importedTransactions: importedTransactions.rows.map(serializeImportedTransaction),
     recurring: recurring.rows.map(serializeRecurring),
     purchases: purchases.rows.map(serializePurchase),
     purchaseInstallments: purchaseInstallments.rows,
