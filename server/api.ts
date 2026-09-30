@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
 import { getDb, withTransaction } from "./db";
 import type { PoolClient } from "pg";
-import { buildDashboard, buildSimulation, buildSimulationScenarios, moneyToCents, normalizeMonthlyIncomeCents, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
+import { buildDashboard, buildReconstructionCenter, buildSimulation, buildSimulationScenarios, calculateSafeCapacityCents, moneyToCents, normalizeMonthlyIncomeCents, todayIso, type FinancialProfile, type IncomeFrequency, type Launch } from "./domain";
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
@@ -165,6 +165,39 @@ function getLaunches(userId: string) {
       ORDER BY due_date ASC, created_at ASC`,
     [userId],
   );
+}
+
+async function getReconstructionCenter(userId: string) {
+  const [profileResult, debtResult, planResult, actionResult, essentialResult, overdueResult] = await Promise.all([
+    getDb().query("SELECT diagnosis_completed_at, conservative_monthly_income_cents, normalized_monthly_income_cents, existing_commitments_cents, safety_margin_cents FROM user_profiles WHERE user_id=$1", [userId]),
+    getDb().query("SELECT COUNT(*)::int AS all_count, COUNT(*) FILTER (WHERE status <> 'paid' AND balance_cents > 0)::int AS open_count, COALESCE(SUM(balance_cents) FILTER (WHERE status <> 'paid' AND balance_cents > 0),0)::bigint AS open_balance FROM debts WHERE user_id=$1", [userId]),
+    getDb().query("SELECT COALESCE(SUM(monthly_total_cents) FILTER (WHERE status='active'),0)::bigint AS active_total FROM recovery_plans WHERE user_id=$1", [userId]),
+    getDb().query("SELECT COUNT(*) FILTER (WHERE status <> 'resolved')::int AS open_count FROM action_items WHERE user_id=$1", [userId]),
+    getDb().query("SELECT COALESCE(SUM(monthly_amount_cents) FILTER (WHERE active=TRUE),0)::bigint AS essential_floor FROM essential_expenses WHERE user_id=$1", [userId]),
+    getDb().query(`SELECT (
+      (SELECT COUNT(*) FROM financial_launches WHERE user_id=$1 AND type <> 'entrada' AND status='pending' AND due_date < CURRENT_DATE)
+      + (SELECT COUNT(*) FROM debts WHERE user_id=$1 AND status <> 'paid' AND due_date IS NOT NULL AND due_date < CURRENT_DATE)
+    )::int AS overdue_count`, [userId]),
+  ]);
+  const profile = profileResult.rows[0];
+  const debts = debtResult.rows[0];
+  const normalizedIncome = Number(profile?.conservative_monthly_income_cents ?? profile?.normalized_monthly_income_cents ?? 0);
+  const safeCapacityCents = calculateSafeCapacityCents({
+    conservativeMonthlyIncomeCents: normalizedIncome,
+    essentialFloorCents: Number(essentialResult.rows[0]?.essential_floor ?? 0),
+    existingMonthlyCommitmentsCents: Number(profile?.existing_commitments_cents ?? 0),
+    safetyMarginCents: Number(profile?.safety_margin_cents ?? 0),
+  });
+  return buildReconstructionCenter({
+    diagnosisCompleted: Boolean(profile?.diagnosis_completed_at),
+    safeCapacity: safeCapacityCents / 100,
+    totalDebtBalance: Number(debts?.open_balance ?? 0) / 100,
+    openDebtCount: Number(debts?.open_count ?? 0),
+    hasDebtHistory: Number(debts?.all_count ?? 0) > 0,
+    activePlanMonthlyTotal: Number(planResult.rows[0]?.active_total ?? 0) / 100,
+    openActionCount: Number(actionResult.rows[0]?.open_count ?? 0),
+    overdueCount: Number(overdueResult.rows[0]?.overdue_count ?? 0),
+  });
 }
 
 async function syncNotifications(userId: string) {
@@ -716,7 +749,9 @@ router.get("/dashboard", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
   const profile = await getProfile(request.user!.id);
-  response.json(buildDashboard(launches, todayIso(), profile ?? fallbackProfile(launches)));
+  const dashboard = buildDashboard(launches, todayIso(), profile ?? fallbackProfile(launches));
+  dashboard.reconstruction = await getReconstructionCenter(request.user!.id);
+  response.json(dashboard);
 }));
 
 router.get("/launches", requireAuth, asyncRoute(async (request, response) => {

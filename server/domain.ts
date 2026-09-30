@@ -153,6 +153,7 @@ export type Dashboard = {
   overdue: Launch[];
   alerts: DashboardAlert[];
   priorities: PriorityAction[];
+  reconstruction?: ReconstructionCenter;
 };
 
 export type DashboardAlert = {
@@ -167,6 +168,109 @@ export type PriorityAction = {
   title: string;
   detail: string;
 };
+
+export type ReconstructionStage = "diagnosis" | "map" | "stabilize" | "plan" | "execute" | "rebuild";
+
+export type ReconstructionCenter = {
+  stage: ReconstructionStage;
+  stageLabel: string;
+  title: string;
+  message: string;
+  nextAction: { id: string; label: string; detail: string };
+  progressPercent: number;
+  safeCapacity: number;
+  totalDebtBalance: number;
+  openDebtCount: number;
+  hasDebtHistory: boolean;
+  activePlanMonthlyTotal: number;
+  openActionCount: number;
+  overdueCount: number;
+  diagnosisCompleted: boolean;
+  activePlan: boolean;
+  status: "not_started" | "stabilizing" | "in_recovery" | "rebuilding";
+};
+
+export type ReconstructionCenterInput = {
+  diagnosisCompleted: boolean;
+  safeCapacity: number;
+  totalDebtBalance: number;
+  openDebtCount: number;
+  hasDebtHistory: boolean;
+  activePlanMonthlyTotal: number;
+  openActionCount: number;
+  overdueCount: number;
+};
+
+export function buildReconstructionCenter(input: ReconstructionCenterInput): ReconstructionCenter {
+  const activePlan = input.activePlanMonthlyTotal > 0;
+  let stage: ReconstructionStage;
+  let stageLabel: string;
+  let title: string;
+  let message: string;
+  let nextAction: ReconstructionCenter["nextAction"];
+  let progressPercent: number;
+  let status: ReconstructionCenter["status"];
+
+  if (!input.diagnosisCompleted) {
+    stage = "diagnosis";
+    stageLabel = "começo da reconstrução";
+    title = "Primeiro, vamos entender sua realidade.";
+    message = "Sem julgamento: organize renda, necessidades básicas e compromissos para descobrir o que realmente cabe.";
+    nextAction = { id: "complete-diagnosis", label: "fazer meu diagnóstico", detail: "Leva poucos minutos e cria a base do seu plano." };
+    progressPercent = 15;
+    status = "not_started";
+  } else if (!input.openDebtCount && !input.hasDebtHistory) {
+    stage = "map";
+    stageLabel = "visibilidade";
+    title = "Agora vamos colocar tudo no mapa.";
+    message = "Você ainda não cadastrou uma dívida em aberto. Registrar a realidade é o primeiro passo para decidir com segurança.";
+    nextAction = { id: "map-debts", label: "montar meu mapa de dívidas", detail: "Cadastre uma dívida por vez, mesmo que o valor ainda seja aproximado." };
+    progressPercent = 35;
+    status = "stabilizing";
+  } else if (!input.openDebtCount && input.hasDebtHistory) {
+    stage = "rebuild";
+    stageLabel = "reconstrução";
+    title = "Você virou a página. Agora vamos construir segurança.";
+    message = "Com as dívidas em dia, o próximo objetivo é recuperar margem, formar reserva e evitar novas dívidas.";
+    nextAction = { id: "build-safety", label: "criar minha reserva de segurança", detail: "Comece com um valor pequeno e recorrente, sem comprometer o básico." };
+    progressPercent = 100;
+    status = "rebuilding";
+  } else if (!activePlan) {
+    stage = input.safeCapacity > 0 ? "plan" : "stabilize";
+    stageLabel = input.safeCapacity > 0 ? "plano possível" : "estabilização";
+    title = input.safeCapacity > 0 ? "Vamos criar um plano que caiba." : "Antes de pagar, precisamos proteger o básico.";
+    message = input.safeCapacity > 0
+      ? "Sua capacidade segura deve guiar a negociação. Um acordo que não cabe só cria uma nova dívida."
+      : "Neste momento, a capacidade segura está zerada. O foco é reduzir pressão e organizar despesas essenciais antes de assumir parcelas.";
+    nextAction = input.safeCapacity > 0
+      ? { id: "create-recovery-plan", label: "montar meu plano de pagamento", detail: "Escolha uma dívida prioritária e defina um valor mensal sustentável." }
+      : { id: "protect-essentials", label: "proteger minhas despesas básicas", detail: "Revise o diagnóstico e corte apenas o que não compromete sua sobrevivência." };
+    progressPercent = input.safeCapacity > 0 ? 55 : 45;
+    status = "stabilizing";
+  } else if (input.totalDebtBalance > 0) {
+    stage = "execute";
+    stageLabel = "execução acompanhada";
+    title = "Uma ação por vez. O plano está em andamento.";
+    message = input.overdueCount > 0
+      ? "Há atrasos que precisam de atenção. Siga a próxima ação e atualize o plano quando sua realidade mudar."
+      : "A constância importa mais do que acelerar. Registre pagamentos, negociações e revisões semanais.";
+    nextAction = input.openActionCount > 0
+      ? { id: "complete-next-action", label: "ver minha próxima ação", detail: "Conclua o próximo passo antes de assumir novas prioridades." }
+      : { id: "weekly-review", label: "fazer minha revisão semanal", detail: "Confira o que mudou e mantenha o plano compatível com sua renda." };
+    progressPercent = 75;
+    status = "in_recovery";
+  } else {
+    stage = "rebuild";
+    stageLabel = "reconstrução";
+    title = "Você virou a página. Agora vamos construir segurança.";
+    message = "Com as dívidas em dia, o próximo objetivo é recuperar margem, formar reserva e evitar novas dívidas.";
+    nextAction = { id: "build-safety", label: "criar minha reserva de segurança", detail: "Comece com um valor pequeno e recorrente, sem comprometer o básico." };
+    progressPercent = 100;
+    status = "rebuilding";
+  }
+
+  return { stage, stageLabel, title, message, nextAction, progressPercent, safeCapacity: input.safeCapacity, totalDebtBalance: input.totalDebtBalance, openDebtCount: input.openDebtCount, hasDebtHistory: input.hasDebtHistory, activePlanMonthlyTotal: input.activePlanMonthlyTotal, openActionCount: input.openActionCount, overdueCount: input.overdueCount, diagnosisCompleted: input.diagnosisCompleted, activePlan, status };
+}
 
 export function todayIso() {
   return new Date().toISOString().slice(0, 10);

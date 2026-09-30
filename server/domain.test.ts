@@ -4,6 +4,7 @@ import {
   assertDebtStatus,
   assertPlanCanActivate,
   buildDashboard,
+  buildReconstructionCenter,
   buildSimulation,
   buildSimulationScenarios,
   calculateEssentialFloorCents,
@@ -70,6 +71,24 @@ describe("financial domain", () => {
 });
 
 describe("recovery planning rules", () => {
+  it("starts with diagnosis instead of prescribing payment", () => {
+    const center = buildReconstructionCenter({ diagnosisCompleted: false, safeCapacity: 0, totalDebtBalance: 0, openDebtCount: 0, hasDebtHistory: false, activePlanMonthlyTotal: 0, openActionCount: 0, overdueCount: 0 });
+    expect(center.stage).toBe("diagnosis");
+    expect(center.nextAction.id).toBe("complete-diagnosis");
+  });
+
+  it("protects stabilization when there is debt but no safe capacity", () => {
+    const center = buildReconstructionCenter({ diagnosisCompleted: true, safeCapacity: 0, totalDebtBalance: 2400, openDebtCount: 2, hasDebtHistory: true, activePlanMonthlyTotal: 0, openActionCount: 0, overdueCount: 1 });
+    expect(center.stage).toBe("stabilize");
+    expect(center.nextAction.id).toBe("protect-essentials");
+  });
+
+  it("moves from an active plan to rebuilding after debt is paid", () => {
+    const center = buildReconstructionCenter({ diagnosisCompleted: true, safeCapacity: 500, totalDebtBalance: 0, openDebtCount: 0, hasDebtHistory: true, activePlanMonthlyTotal: 300, openActionCount: 0, overdueCount: 0 });
+    expect(center.stage).toBe("rebuild");
+    expect(center.progressPercent).toBe(100);
+  });
+
   it("normalizes monthly, biweekly and weekly income using documented factors", () => {
     expect(normalizeMonthlyIncomeCents(300_000, "monthly").monthlyIncomeCents).toBe(300_000);
     expect(normalizeMonthlyIncomeCents(100_000, "biweekly").monthlyIncomeCents).toBe(216_667);

@@ -235,3 +235,36 @@ h2 { margin-top: 9px; font-family: "Plus Jakarta Sans", sans-serif; font-size: 1
 .imported-transaction-actions .icon-action { color: #438f67; }
 .imported-transaction-actions .icon-action.danger-action { color: #b15b49; }
 @media (max-width: 620px) { .open-finance-panel { padding: 19px; } .connection-row { display: block; } .connection-row small { margin-top: 8px; text-align: left; } .imported-transaction-row { grid-template-columns: 1fr auto; } .imported-transaction-row b { grid-column: 2; grid-row: 1; } .imported-transaction-actions { grid-column: 1 / -1; } }
+
+
+.reconstruction-card { min-height: 255px; position: relative; overflow: hidden; display: grid; grid-template-columns: 1.32fr .68fr; gap: 24px; padding: 28px 31px; color: #f7fffa; border-radius: 22px; background: linear-gradient(118deg, #163d31 0%, #225a45 58%, #3a8063 100%); box-shadow: 0 20px 38px rgba(29,77,62,.18); }
+.reconstruction-card::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .1; background-image: radial-gradient(rgba(255,255,255,.9) .7px, transparent .7px); background-size: 13px 13px; }
+.reconstruction-copy, .reconstruction-side { position: relative; z-index: 1; }
+.reconstruction-copy { max-width: 570px; }
+.reconstruction-copy .hero-label { color: #b7dfc7; }
+.reconstruction-copy h2 { margin-top: 15px; color: #fff; font-size: clamp(22px, 3vw, 31px); line-height: 1.08; letter-spacing: -.065em; }
+.reconstruction-copy p { max-width: 490px; margin-top: 10px; color: #c6e0cf; font-size: 11px; line-height: 1.5; }
+.reconstruction-progress { max-width: 480px; margin-top: 20px; }
+.reconstruction-progress-head { display: flex; justify-content: space-between; gap: 12px; color: #a8d0b6; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; }
+.reconstruction-progress-head strong { color: #f5fff8; }
+.reconstruction-progress-track { height: 7px; overflow: hidden; margin-top: 8px; border-radius: 99px; background: rgba(255,255,255,.16); }
+.reconstruction-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--mint-strong); transition: width .35s ease; }
+.reconstruction-action { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; padding: 10px 13px; color: var(--forest); border-radius: 10px; background: var(--mint); font-size: 10px; font-weight: 800; cursor: pointer; box-shadow: 0 8px 18px rgba(0,0,0,.12); }
+.reconstruction-action:hover { background: #e4ffed; transform: translateY(-1px); }
+.reconstruction-copy > small { display: block; margin-top: 8px; color: #a9cdb4; font-size: 9px; line-height: 1.4; }
+.reconstruction-side { align-self: center; padding: 17px; border: 1px solid rgba(222,255,236,.18); border-radius: 15px; background: rgba(255,255,255,.08); backdrop-filter: blur(10px); }
+.reconstruction-side-label { color: #a6cfb3; font-size: 9px; text-transform: uppercase; letter-spacing: .1em; font-weight: 800; }
+.reconstruction-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 15px 12px; margin-top: 17px; }
+.reconstruction-stats div:last-child { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid rgba(222,255,236,.14); }
+.reconstruction-stats strong, .reconstruction-stats span { display: block; }
+.reconstruction-stats strong { color: #fff; font-family: "Plus Jakarta Sans", sans-serif; font-size: 18px; letter-spacing: -.05em; }
+.reconstruction-stats span { margin-top: 3px; color: #b3d5be; font-size: 9px; }
+.reconstruction-rule { display: flex; align-items: flex-start; gap: 7px; margin-top: 18px; padding-top: 13px; border-top: 1px solid rgba(222,255,236,.14); color: #c5e3cf; font-size: 9px; line-height: 1.45; }
+.reconstruction-rule svg { flex: 0 0 auto; color: var(--mint-strong); }
+.reconstruction-not_started { background: linear-gradient(118deg, #244f40 0%, #36765b 100%); }
+.reconstruction-stabilizing { background: linear-gradient(118deg, #3b4d39 0%, #66754a 100%); }
+.reconstruction-in_recovery { background: linear-gradient(118deg, #163d31 0%, #225a45 100%); }
+.reconstruction-rebuilding { background: linear-gradient(118deg, #38545a 0%, #497b78 100%); }
+.reconstruction-orbit { position: absolute; width: 285px; height: 285px; right: -87px; top: -102px; border: 1px solid rgba(220,255,232,.15); border-radius: 50%; pointer-events: none; }
+@media (max-width: 800px) { .reconstruction-card { grid-template-columns: 1fr; padding: 24px 22px; } .reconstruction-side { width: 100%; } }
+@media (max-width: 500px) { .reconstruction-copy h2 { font-size: 25px; } .reconstruction-stats { gap: 12px; } }

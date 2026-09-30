@@ -12,6 +12,8 @@ Aplicação web de organização financeira pessoal com ambiente do cliente e pa
 - Simulador de compra parcelada calculado no backend.
 - Onboarding guiado com renda, próxima entrada, saldo atual e margem de segurança.
 - Centro de controle com alertas, comprometimento da renda e próximos passos.
+- Centro de Reconstrução Financeira com estágio da jornada, capacidade segura, progresso, riscos e uma única próxima ação executável.
+- Jornada orientada à reconstrução: diagnóstico, mapa de dívidas, estabilização, plano possível, execução acompanhada e construção de segurança.
 - Contas e entradas recorrentes com geração de vencimentos futuros.
 - Compras parceladas agrupadas com parcelas individuais e marcação de pagamento.
 - Plano de dívidas com saldo, parcela, prioridade, negociação e quitação.
@@ -57,7 +59,7 @@ server/recovery.ts   diagnóstico, dívidas, negociação, plano, pagamentos e r
 server/auth.ts       sessões, cookies e autorização por papel
 server/db.ts         pool PostgreSQL
 server/migrations.ts schema inicial e migrações
-server/domain.ts     saldo projetado e simulador
+server/domain.ts     saldo projetado, simulador e motor da jornada de reconstrução
 server/openfinance.ts ingestão idempotente e conciliação de transações externas
 shared/              constantes compartilhadas
 render.yaml          configuração do serviço no Render

@@ -229,6 +229,7 @@ export type CsvPreviewRow = { type: LaunchType; name: string; amount: number; du
 export type CsvPreview = { hash: string; rows: CsvPreviewRow[]; count: number; alreadyImported: boolean; previousBatch: { id: string; row_count: number; completed_at: string } | null };
 export type FinancialConnection = { id: string; provider: string; institutionName: string; accountLabel: string | null; status: string; statusLabel: string; consentStatus: string; lastSyncedAt: string | null; consentExpiresAt: string | null; errorMessage: string | null; createdAt: string; updatedAt: string };
 export type ImportedTransaction = { id: string; connectionId: string; externalTransactionId: string; direction: "inflow" | "outflow"; amount: number; transactionDate: string; description: string; merchantName: string | null; category: string | null; providerStatus: string | null; state: "pending" | "accepted" | "ignored" | "reversed"; financialLaunchId: string | null; createdAt: string; updatedAt: string };
+export type ReconstructionCenter = { stage: "diagnosis" | "map" | "stabilize" | "plan" | "execute" | "rebuild"; stageLabel: string; title: string; message: string; nextAction: { id: string; label: string; detail: string }; progressPercent: number; safeCapacity: number; totalDebtBalance: number; openDebtCount: number; hasDebtHistory: boolean; activePlanMonthlyTotal: number; openActionCount: number; overdueCount: number; diagnosisCompleted: boolean; activePlan: boolean; status: "not_started" | "stabilizing" | "in_recovery" | "rebuilding" };
 
 export type Dashboard = {
   today: string;
@@ -243,6 +244,7 @@ export type Dashboard = {
   overdue: Launch[];
   alerts: { id: string; tone: "danger" | "attention" | "good"; title: string; detail: string }[];
   priorities: { id: string; title: string; detail: string }[];
+  reconstruction?: ReconstructionCenter;
 };
 
 export type AdminMetrics = { users: number; activeUsers: number; attentionUsers: number; launches: number };
