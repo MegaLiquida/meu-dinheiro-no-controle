@@ -10,10 +10,10 @@ import WeeklyReview from "../components/recovery/WeeklyReview";
 
 type RecoveryTab = "map" | "negotiation" | "plan" | "payments";
 const tabs: Array<{ id: RecoveryTab; label: string; detail: string; icon: typeof Map }> = [
-  { id: "map", label: "Mapa", detail: "entender e priorizar", icon: Map },
-  { id: "negotiation", label: "Negociação", detail: "registrar propostas", icon: Handshake },
-  { id: "plan", label: "Plano", detail: "definir valores possíveis", icon: RefreshCw },
-  { id: "payments", label: "Pagamentos", detail: "acompanhar o saldo", icon: Banknote },
+  { id: "map", label: "Entender dívidas", detail: "cadastrar e priorizar", icon: Map },
+  { id: "negotiation", label: "Conversar", detail: "guardar propostas", icon: Handshake },
+  { id: "plan", label: "Montar plano", detail: "escolher valores possíveis", icon: RefreshCw },
+  { id: "payments", label: "Acompanhar", detail: "registrar pagamentos", icon: Banknote },
 ];
 
 export default function Debts({ initialDebtId = null }: { initialDebtId?: string | null }) {
@@ -39,7 +39,7 @@ export default function Debts({ initialDebtId = null }: { initialDebtId?: string
   if (loading) return <div className="page-stack"><div className="auth-loading" role="status">Carregando sua jornada de recuperação...</div></div>;
   if (error) return <div className="persistent-error" role="alert"><strong>Não foi possível abrir sua jornada de dívidas.</strong><span>{error}</span><button className="primary-button" type="button" onClick={() => { setLoading(true); void reload(); }}>Tentar novamente</button></div>;
   return <div className="page-stack page-enter">
-    <div className="section-heading"><div><div className="eyebrow">recuperar com passos possíveis</div><h1>Jornada de dívidas</h1></div><p className="section-detail">Organize o que existe, registre conversas e pague no ritmo que sua realidade comporta.</p></div>
+    <div className="section-heading"><div><div className="eyebrow">vamos por partes</div><h1>Reconstruir minhas dívidas</h1></div><p className="section-detail">Primeiro entendemos o que existe. Depois registramos as conversas e montamos um plano que não prejudique o básico.</p></div>
     <section className="debt-summary"><div className="debt-summary-copy"><span className="eyebrow">sem julgamento e sem promessas</span><h2>{selected ? `Próximo foco: ${selected.name}` : "Comece mapeando uma dívida."}</h2><p>{selected?.prioritization?.reasons?.length ? selected.prioritization.reasons.join("; ") : "A prioridade usa apenas os dados informados. Campos ausentes permanecem ausentes."}</p></div><div className="debt-summary-metrics"><div><span>dívidas abertas</span><strong>{open.length}</strong></div><div><span>saldo conhecido</span><strong>{money(total)}</strong></div><div><span>selecionada</span><strong>{selected?.prioritization?.rank ? `#${selected.prioritization.rank}` : "—"}</strong></div></div></section>
     <nav className="recovery-tabs" aria-label="Etapas da jornada de dívidas">{tabs.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "step" : undefined}><Icon size={18} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>; })}</nav>
     {tab === "map" && <DebtMap debts={debts} selectedId={selectedId} onSelect={setSelectedId} onChanged={reload} onNext={() => setTab("negotiation")} />}

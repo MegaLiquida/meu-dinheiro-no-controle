@@ -279,5 +279,16 @@ h2 { margin-top: 9px; font-family: "Plus Jakarta Sans", sans-serif; font-size: 1
 .reconstruction-in_recovery { background: linear-gradient(118deg, #163d31 0%, #225a45 100%); }
 .reconstruction-rebuilding { background: linear-gradient(118deg, #38545a 0%, #497b78 100%); }
 .reconstruction-orbit { position: absolute; width: 285px; height: 285px; right: -87px; top: -102px; border: 1px solid rgba(220,255,232,.15); border-radius: 50%; pointer-events: none; }
+.journey-rail { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 7px; border: 1px solid #e0e9e0; border-radius: 18px; background: rgba(255,255,255,.7); box-shadow: var(--shadow-small); }
+.journey-step { min-width: 0; position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 13px 15px; color: var(--ink); text-align: left; border-radius: 12px; background: transparent; cursor: pointer; }
+.journey-step:hover, .journey-step:focus-visible { background: #f0f8f1; }
+.journey-step-icon { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; color: #87968d; border: 1px solid #dce6dd; border-radius: 50%; background: #f8faf7; font-size: 11px; font-weight: 800; }
+.journey-step.complete .journey-step-icon { color: var(--forest); border-color: #bce8cb; background: var(--mint); }
+.journey-step-copy { min-width: 0; display: grid; gap: 4px; }
+.journey-step-copy strong { font-family: "Plus Jakarta Sans", sans-serif; font-size: 12px; }
+.journey-step-copy small { color: #718278; font-size: 10px; line-height: 1.4; }
+.journey-connector { position: absolute; top: 27px; right: -1px; width: 14px; border-top: 1px dashed #cbd9cd; }
+.panel-explainer { max-width: 310px; margin-top: 7px; color: #687a70; font-size: 11px; line-height: 1.45; }
 @media (max-width: 800px) { .reconstruction-card { grid-template-columns: 1fr; padding: 24px 22px; } .reconstruction-side { width: 100%; } }
+@media (max-width: 700px) { .journey-rail { grid-template-columns: 1fr; gap: 3px; padding: 6px; } .journey-step { padding: 11px 10px; } .journey-connector { top: auto; right: auto; left: 23px; bottom: -4px; width: 1px; height: 8px; border-top: 0; border-left: 1px dashed #cbd9cd; } }
 @media (max-width: 500px) { .reconstruction-copy h2 { font-size: 25px; } .reconstruction-stats { gap: 12px; } }

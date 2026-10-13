@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  ArrowDownLeft, ArrowRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight,
+  ArrowDownLeft, ArrowRight, Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
   CircleHelp, CreditCard, HandCoins, Leaf, LogOut, Menu, Plus, ReceiptText, Repeat2, ShieldCheck, Sparkles,
   TrendingUp, WalletCards, X,
 } from "lucide-react";
@@ -68,6 +68,17 @@ function ReconstructionCard({ dashboard, onNavigate }: { dashboard: Dashboard; o
   </section>;
 }
 
+function JourneyRail({ dashboard, onNavigate }: { dashboard: Dashboard; onNavigate: (view: View) => void }) {
+  const recovery = dashboard.reconstruction;
+  if (!recovery) return null;
+  const steps = [
+    { key: "today", title: "Hoje", detail: "Veja o que entra, o que sai e o que merece atenção.", view: "overview" as View, done: true },
+    { key: "organize", title: "Organizar", detail: recovery.diagnosisCompleted ? "Seu ponto de partida está registrado." : "Descubra quanto precisa para o básico.", view: "diagnosis" as View, done: recovery.diagnosisCompleted },
+    { key: "rebuild", title: "Reconstruir", detail: recovery.openDebtCount ? `${recovery.openDebtCount} dívida(s) aguardando um próximo passo.` : "Mapeie uma dívida quando estiver pronto.", view: "debts" as View, done: recovery.hasDebtHistory || recovery.activePlan },
+  ];
+  return <section className="journey-rail" aria-label="Caminho da sua organização financeira">{steps.map((step, index) => <button type="button" className={`journey-step ${step.done ? "complete" : ""} ${index === 0 ? "current" : ""}`} key={step.key} onClick={() => onNavigate(step.view)}><span className="journey-step-icon">{step.done ? <CheckCircle2 size={17} /> : <span>{index + 1}</span>}</span><span className="journey-step-copy"><strong>{step.title}</strong><small>{step.detail}</small></span>{index < steps.length - 1 && <span className="journey-connector" aria-hidden="true" />}</button>)}</section>;
+}
+
 function Overview({ dashboard, onNavigate, onOpenAdd, onOpenDebt }: { dashboard: Dashboard; onNavigate: (view: View) => void; onOpenAdd: () => void; onOpenDebt: (debtId: string) => void }) {
   const { projectedBalance, currentBalance, nextIncome, metrics, upcoming, profile, alerts, priorities } = dashboard;
   const health = projectedBalance < 0 ? "danger" : projectedBalance < profile.safetyMargin ? "attention" : "good";
@@ -75,6 +86,7 @@ function Overview({ dashboard, onNavigate, onOpenAdd, onOpenDebt }: { dashboard:
   return <div className="page-stack page-enter">
     <SectionTitle eyebrow={`reconstrução financeira · ${dashboard.monthLabel}`} title="Vamos recuperar o controle." detail="Uma ação possível por vez, sem julgamento e sem compromissos que não cabem." />
     <ReconstructionCard dashboard={dashboard} onNavigate={onNavigate} />
+    <JourneyRail dashboard={dashboard} onNavigate={onNavigate} />
     <OpenActions onOpenDebt={onOpenDebt} />
     <section className="balance-hero"><div className="hero-orbit orbit-one" /><div className="hero-orbit orbit-two" /><div className="hero-copy"><div className="hero-label"><span className="live-dot" /> situação de hoje</div><div className="balance-amount">{money(projectedBalance)}</div><p>Sobra projetada até <strong>{nextIncome ? fullDateLabel(nextIncome.dueDate) : "o fim do período"}</strong>, depois de descontar os compromissos.</p><div className="balance-context"><span><ArrowDownLeft size={15} /> {money(currentBalance)} disponíveis hoje</span><span><CalendarDays size={15} /> próximo compromisso: {upcoming[0] ? `${upcoming[0].name}, ${dateLabel(upcoming[0].dueDate)}` : "nenhum cadastrado"}</span></div><button className="hero-primary-action" type="button" onClick={upcoming.length ? () => onNavigate("calendar") : onOpenAdd}>{upcoming.length ? "ver próximo compromisso" : "adicionar compromisso"} <ArrowRight size={15} /></button></div><div className="hero-side"><div className="health-ring"><span>{health === "good" ? "OK" : health === "attention" ? "!" : "×"}</span></div><div><span className="hero-side-label">saúde do período</span><strong>{healthLabel}</strong><small>próxima entrada: {nextIncome ? money(nextIncome.amount) : "não cadastrada"}</small></div></div></section>
     <section className="metric-grid"><div className="metric-card metric-green"><div className="metric-icon"><TrendingUp size={19} /></div><div className="metric-label">entradas do mês</div><div className="metric-value">{money(metrics.incomeTotal)}</div><div className="metric-foot">calculado a partir dos seus lançamentos</div></div><div className="metric-card metric-yellow"><div className="metric-icon"><ReceiptText size={19} /></div><div className="metric-label">contas fixas</div><div className="metric-value">{money(metrics.fixedTotal)}</div><div className="metric-foot">compromissos recorrentes cadastrados</div></div><div className="metric-card metric-coral"><div className="metric-icon"><CreditCard size={19} /></div><div className="metric-label">parcelas em aberto</div><div className="metric-value">{money(metrics.installmentsTotal)}</div><div className="metric-foot">parcelas previstas no mês</div></div><div className="control-summary"><span><strong>{metrics.committedPercent}%</strong> da renda já está comprometida</span><span>margem protegida: <strong>{money(profile.safetyMargin)}</strong></span></div></section>
