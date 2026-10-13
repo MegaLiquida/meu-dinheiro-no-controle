@@ -45,7 +45,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand-name { font-family: "Plus Jakarta Sans", sans-serif; font-size: 14px; font-weight: 800; letter-spacing: -.03em; line-height: 1.05; }
 .brand-subtitle { color: var(--ink-soft); font-size: 12px; margin-top: 3px; }
 .sidebar-caption { margin: 42px 10px 14px; color: #9ba69f; font-size: 10px; text-transform: uppercase; letter-spacing: .13em; font-weight: 700; }
-.main-nav { display: grid; gap: 5px; }
+.main-nav { display: grid; gap: 17px; }
+.nav-group { display: grid; gap: 4px; }
+.nav-group-label { margin: 0 10px 3px; color: #a0aaa3; font-size: 10px; line-height: 1.2; letter-spacing: .13em; text-transform: uppercase; font-weight: 800; }
 .nav-button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 12px; border-radius: 12px; color: #687870; background: transparent; text-align: left; cursor: pointer; position: relative; transition: background .18s ease, color .18s ease, transform .18s ease; }
 .nav-button:hover { background: rgba(218, 238, 226, .55); color: var(--forest); transform: translateX(2px); }
 .nav-button.active { color: var(--forest); background: var(--mint); font-weight: 700; box-shadow: 0 7px 18px rgba(116, 220, 168, .17); }
