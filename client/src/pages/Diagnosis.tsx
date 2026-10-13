@@ -141,17 +141,17 @@ export default function Diagnosis() {
   if (error) return <div className="persistent-error" role="alert"><strong>Seu diagnóstico não carregou.</strong><span>{error}</span><button className="primary-button" type="button" onClick={() => void reload()}>Tentar novamente</button></div>;
 
   return <div className="page-stack page-enter diagnosis-page">
-    <div className="section-heading"><div><div className="eyebrow">seu ponto de partida</div><h1>Diagnóstico financeiro</h1></div><p className="section-detail">Uma leitura prática da sua renda, do que protege o básico e do que pode ir para a recuperação.</p></div>
+    <div className="section-heading"><div><div className="eyebrow">vamos entender juntos</div><h1>Entender minha situação</h1></div><p className="section-detail">Responda com o que souber. Uma estimativa já ajuda a descobrir quanto pode ir para as dívidas sem faltar para o básico.</p></div>
 
     <section className="diagnosis-summary" aria-live="polite">
-      <div><span>renda mensal normalizada</span><strong>{money(diagnosis?.normalizedMonthlyIncome ?? normalizedIncome)}</strong><small>ajustada conforme a frequência informada</small></div>
-      <div><span>piso essencial</span><strong>{money(diagnosis?.essentialFloor ?? localEssentialFloor)}</strong><small>soma das despesas essenciais ativas</small></div>
-      <div><span>capacidade segura</span><strong>{money(diagnosis?.safeCapacity ?? estimatedCapacity)}</strong><small>estimativa mensal disponível para o plano</small></div>
-      <p><CircleHelp size={16} /> Capacidade operacional conservadora. Esta estimativa ajuda no planejamento, mas <strong>não representa mínimo existencial legal nem aconselhamento jurídico</strong>.</p>
+      <div><span>quanto entra por mês</span><strong>{money(diagnosis?.normalizedMonthlyIncome ?? normalizedIncome)}</strong><small>estimativa considerando a frequência informada</small></div>
+      <div><span>quanto precisa para o básico</span><strong>{money(diagnosis?.essentialFloor ?? localEssentialFloor)}</strong><small>moradia, alimentação, saúde e outras necessidades</small></div>
+      <div><span>quanto pode ir para as dívidas</span><strong>{money(diagnosis?.safeCapacity ?? estimatedCapacity)}</strong><small>estimativa para um plano que caiba na sua vida</small></div>
+      <p><CircleHelp size={16} /> Este é um ponto de partida, não uma cobrança. Atualize os valores quando lembrar de algo ou sua situação mudar.</p>
     </section>
 
     <form className="panel diagnosis-form" onSubmit={saveDiagnosis} noValidate>
-      <div className="diagnosis-step-heading"><span>1</span><div><h2>Renda e frequência</h2><p>Informe o valor por período. A conversão mensal é feita sem inventar entradas.</p></div></div>
+      <div className="diagnosis-step-heading"><span>1</span><div><h2>O dinheiro que entra</h2><p>Informe uma média. Se sua renda variar, escolha um valor mais seguro.</p></div></div>
       <div className="diagnosis-fields">
         <label htmlFor="diagnosis-income">valor que entra por período<input id="diagnosis-income" required type="number" min="0.01" step="0.01" value={form.incomeAmount} onChange={(event) => setForm({ ...form, incomeAmount: event.target.value })} aria-invalid={Number(form.incomeAmount) <= 0} aria-describedby="diagnosis-income-help" /></label>
         <label htmlFor="diagnosis-frequency">frequência<select id="diagnosis-frequency" value={form.incomeFrequency} onChange={(event) => setForm({ ...form, incomeFrequency: event.target.value as IncomeFrequency })}><option value="monthly">mensal</option><option value="biweekly">a cada quinze dias</option><option value="weekly">semanal</option><option value="irregular">irregular</option></select></label>
@@ -161,7 +161,7 @@ export default function Diagnosis() {
         <label htmlFor="diagnosis-next-income">próxima entrada<input id="diagnosis-next-income" type="date" value={form.nextIncomeDate} onChange={(event) => setForm({ ...form, nextIncomeDate: event.target.value })} /></label>
       </div>
 
-      <div className="diagnosis-step-heading"><span>2</span><div><h2>Contexto e compromissos</h2><p>Esses dados ajudam a manter o plano compatível com sua realidade.</p></div></div>
+      <div className="diagnosis-step-heading"><span>2</span><div><h2>O que precisamos proteger</h2><p>Essas informações ajudam a não montar um plano maior do que você consegue pagar.</p></div></div>
       <div className="diagnosis-fields">
         <label htmlFor="diagnosis-dependents"><Users size={14} /> dependentes<input id="diagnosis-dependents" type="number" min="0" max="100" value={form.dependents} onChange={(event) => setForm({ ...form, dependents: event.target.value })} /></label>
         <label htmlFor="diagnosis-commitments">outros compromissos mensais<input id="diagnosis-commitments" type="number" min="0" step="0.01" value={form.existingMonthlyCommitments} onChange={(event) => setForm({ ...form, existingMonthlyCommitments: event.target.value })} /></label>
@@ -175,7 +175,7 @@ export default function Diagnosis() {
     </form>
 
     <section className="panel essential-panel">
-      <div className="diagnosis-step-heading"><span>3</span><div><h2>Orçamento essencial</h2><p>Cadastre apenas o que sustenta sua rotina básica. Itens inativos não entram no piso.</p></div></div>
+      <div className="diagnosis-step-heading"><span>3</span><div><h2>Suas despesas básicas</h2><p>Cadastre o que mantém sua rotina: moradia, alimentação, saúde e transporte. Pode estimar.</p></div></div>
       <form className="essential-form" onSubmit={saveExpense}>
         <label htmlFor="expense-name">despesa<input id="expense-name" required minLength={2} value={expenseForm.name} onChange={(event) => setExpenseForm({ ...expenseForm, name: event.target.value })} placeholder="Ex.: aluguel" /></label>
         <label htmlFor="expense-category">categoria<select id="expense-category" value={expenseForm.category} onChange={(event) => setExpenseForm({ ...expenseForm, category: event.target.value as EssentialCategory })}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
