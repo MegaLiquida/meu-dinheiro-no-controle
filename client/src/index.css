@@ -289,6 +289,14 @@ h2 { margin-top: 9px; font-family: "Plus Jakarta Sans", sans-serif; font-size: 1
 .journey-step-copy small { color: #718278; font-size: 10px; line-height: 1.4; }
 .journey-connector { position: absolute; top: 27px; right: -1px; width: 14px; border-top: 1px dashed #cbd9cd; }
 .panel-explainer { max-width: 310px; margin-top: 7px; color: #687a70; font-size: 11px; line-height: 1.45; }
+.recovery-success { display: flex; align-items: center; gap: 9px; margin: 15px 0; padding: 12px; color: #2e6b4b; border: 1px solid #bfe6cb; border-radius: 12px; background: #effaf1; }
+.recovery-success > svg { flex: 0 0 auto; }
+.recovery-success div { min-width: 0; display: grid; gap: 3px; flex: 1; }
+.recovery-success strong { font-size: 11px; }
+.recovery-success span { color: #5d7868; font-size: 10px; line-height: 1.35; }
+.recovery-success button { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 8px 9px; color: #2e6b4b; border: 1px solid #b5ddc1; border-radius: 8px; background: #fff; font-size: 10px; font-weight: 800; cursor: pointer; }
+.recovery-success button:hover { background: #e2f5e7; }
 @media (max-width: 800px) { .reconstruction-card { grid-template-columns: 1fr; padding: 24px 22px; } .reconstruction-side { width: 100%; } }
 @media (max-width: 700px) { .journey-rail { grid-template-columns: 1fr; gap: 3px; padding: 6px; } .journey-step { padding: 11px 10px; } .journey-connector { top: auto; right: auto; left: 23px; bottom: -4px; width: 1px; height: 8px; border-top: 0; border-left: 1px dashed #cbd9cd; } }
+@media (max-width: 520px) { .recovery-success { align-items: flex-start; flex-wrap: wrap; } .recovery-success button { margin-left: 26px; } }
 @media (max-width: 500px) { .reconstruction-copy h2 { font-size: 25px; } .reconstruction-stats { gap: 12px; } }

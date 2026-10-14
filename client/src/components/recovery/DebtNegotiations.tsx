@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { MessageCircle, Plus } from "lucide-react";
+import { ArrowRight, CheckCircle2, MessageCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Debt, type DebtNegotiation, type NegotiationChannel, type NegotiationStatus } from "../../lib/api";
 import { money } from "./DebtMap";
@@ -8,10 +8,11 @@ const channels: Record<NegotiationChannel, string> = { phone: "telefone", email:
 const statuses: Record<NegotiationStatus, string> = { draft: "rascunho", offered: "oferta recebida", accepted: "aceita", rejected: "recusada", expired: "vencida", cancelled: "cancelada" };
 const emptyForm = { contact: "", channel: "phone" as NegotiationChannel, offerAmount: "", downPayment: "", installmentCount: "", installmentAmount: "", totalAmount: "", charges: "", validUntil: "", status: "offered" as NegotiationStatus, notes: "" };
 
-export default function DebtNegotiations({ debts, selectedId, onSelect, onChanged }: { debts: Debt[]; selectedId: string | null; onSelect: (id: string) => void; onChanged: () => Promise<void> }) {
+export default function DebtNegotiations({ debts, selectedId, onSelect, onChanged, onNext }: { debts: Debt[]; selectedId: string | null; onSelect: (id: string) => void; onChanged: () => Promise<void>; onNext: () => void }) {
   const [items, setItems] = useState<DebtNegotiation[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(false);
+  const [acceptedSaved, setAcceptedSaved] = useState(false);
   const debt = debts.find((item) => item.id === selectedId) ?? null;
 
   async function load() {
@@ -30,13 +31,14 @@ export default function DebtNegotiations({ debts, selectedId, onSelect, onChange
     try {
       await api.addDebtNegotiation(selectedId, { contact: form.contact.trim() || null, channel: form.channel, offerAmount: optionalNumber(form.offerAmount), downPayment: optionalNumber(form.downPayment), installmentCount: optionalNumber(form.installmentCount), installmentAmount: optionalNumber(form.installmentAmount), totalAmount: optionalNumber(form.totalAmount), charges: optionalNumber(form.charges), validUntil: form.validUntil || null, status: form.status, notes: form.notes.trim() || null });
       if (form.status === "offered" || form.status === "accepted") await api.updateDebt(selectedId, { status: "negotiating" });
-      toast.success("Negociação registrada no histórico."); setForm(emptyForm); await Promise.all([load(), onChanged()]);
+      setAcceptedSaved(form.status === "accepted"); toast.success(form.status === "accepted" ? "Acordo aceito guardado. Agora confira se a parcela cabe." : "Negociação registrada no histórico."); setForm(emptyForm); await Promise.all([load(), onChanged()]);
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Não foi possível registrar a negociação."); }
   }
 
   return <div className="recovery-grid">
-    <section className="panel recovery-form-panel"><div className="panel-heading"><div><span className="eyebrow">registro sem promessa</span><h2>Nova negociação</h2></div></div>
+    <section className="panel recovery-form-panel"><div className="panel-heading"><div><span className="eyebrow">registro sem promessa</span><h2>Nova negociação</h2><p className="panel-explainer">Guarde o que foi oferecido. Só marque como aceita quando você tiver confirmado as condições.</p></div></div>
       <label className="standalone-label" htmlFor="negotiation-debt">dívida<select id="negotiation-debt" value={selectedId ?? ""} onChange={(event) => onSelect(event.target.value)}><option value="">selecione</option>{debts.filter((item) => item.status !== "paid").map((item) => <option value={item.id} key={item.id}>{item.name} · {money(item.balance)}</option>)}</select></label>
+      {acceptedSaved && <div className="recovery-success" role="status"><CheckCircle2 size={17} /><div><strong>Acordo guardado</strong><span>O próximo passo é testar a parcela dentro da sua capacidade segura.</span></div><button type="button" onClick={onNext}>montar plano <ArrowRight size={14} /></button></div>}
       {!debt ? <div className="empty-state compact"><MessageCircle size={24} /><strong>Selecione uma dívida</strong><span>O registro descreve a conversa; não garante desconto ou acordo.</span></div> : <form className="compact-form" onSubmit={submit}>
         <div className="form-two-col"><label htmlFor="negotiation-channel">canal<select id="negotiation-channel" value={form.channel} onChange={(event) => setForm({ ...form, channel: event.target.value as NegotiationChannel })}>{Object.entries(channels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label htmlFor="negotiation-contact">contato<input id="negotiation-contact" value={form.contact} onChange={(event) => setForm({ ...form, contact: event.target.value })} placeholder="nome ou setor" /></label></div>
         <div className="form-two-col"><label htmlFor="negotiation-offer">valor da oferta<input id="negotiation-offer" type="number" min="0" step="0.01" value={form.offerAmount} onChange={(event) => setForm({ ...form, offerAmount: event.target.value })} /></label><label htmlFor="negotiation-down">entrada<input id="negotiation-down" type="number" min="0" step="0.01" value={form.downPayment} onChange={(event) => setForm({ ...form, downPayment: event.target.value })} /></label></div>
