@@ -300,3 +300,10 @@ h2 { margin-top: 9px; font-family: "Plus Jakarta Sans", sans-serif; font-size: 1
 @media (max-width: 700px) { .journey-rail { grid-template-columns: 1fr; gap: 3px; padding: 6px; } .journey-step { padding: 11px 10px; } .journey-connector { top: auto; right: auto; left: 23px; bottom: -4px; width: 1px; height: 8px; border-top: 0; border-left: 1px dashed #cbd9cd; } }
 @media (max-width: 520px) { .recovery-success { align-items: flex-start; flex-wrap: wrap; } .recovery-success button { margin-left: 26px; } }
 @media (max-width: 500px) { .reconstruction-copy h2 { font-size: 25px; } .reconstruction-stats { gap: 12px; } }
+
+.goal-progress-form { display:flex; align-items:center; gap:7px; margin-top:10px; }
+.goal-progress-form .input-wrap { flex:1; min-width:0; height:30px; padding-left:7px; }
+.goal-progress-form .input-wrap input { height:28px; min-width:0; padding:0 5px; border:0; color:var(--ink); background:transparent; font-size:10px; outline:none; }
+.goal-progress-form .input-wrap > span { color:#8d9a91; font-size:9px; }
+.goal-progress-form .text-action { white-space:nowrap; }
+@media (max-width: 620px) { .goal-progress-form { align-items:stretch; flex-direction:column; }.goal-progress-form .text-action { align-self:flex-start; } }

@@ -52,17 +52,6 @@ const purchaseSchema = z.object({
   firstDueDate: dateSchema,
   category: z.string().trim().max(60).optional().nullable(),
 });
-const debtSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  creditor: z.string().trim().max(120).optional().nullable(),
-  balance: legacyMoneySchema,
-  installment: legacyMoneySchema.default(0),
-  dueDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
-  interestRate: z.coerce.number().finite().nonnegative().max(100_000).optional().nullable(),
-  priority: z.enum(["essential", "high", "normal", "low"]).default("normal"),
-  status: z.enum(["open", "negotiating", "paid"]).default("open"),
-  notes: z.string().trim().max(1000).optional().nullable(),
-});
 const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Use um mês no formato AAAA-MM.");
 const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: legacyMoneySchema });
 const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: positiveLegacyMoneySchema, current: legacyMoneySchema.default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
@@ -140,6 +129,10 @@ async function getProfile(userId: string) {
     [userId],
   );
   return result.rowCount ? serializeProfile(result.rows[0]) : null;
+}
+
+async function ensureProfile(userId: string) {
+  await getDb().query("INSERT INTO user_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", [userId]);
 }
 
 function fallbackProfile(launches: Launch[]): FinancialProfile {
@@ -352,6 +345,7 @@ router.post("/auth/login", asyncRoute(async (request, response) => {
     response.status(401).json({ message: "E-mail ou senha inválidos." });
     return;
   }
+  await ensureProfile(user.id);
   await createSession(user.id, response);
   await recordAudit(user.id, user.id, "auth_login");
   response.json({ user: serializeUser(user) });
@@ -513,40 +507,8 @@ router.patch("/purchase-installments/:id", requireAuth, asyncRoute(async (reques
   response.json({ installment: result });
 }));
 
-// The recovery router owns the expanded debt contract and all new diagnosis/recovery APIs.
-// It is mounted before legacy debt handlers so existing clients keep the same core fields.
+// The recovery router owns the canonical expanded debt contract and all diagnosis/recovery APIs.
 router.use(recoveryRouter);
-
-router.get("/debts", requireAuth, asyncRoute(async (request, response) => {
-  const result = await getDb().query("SELECT id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at FROM debts WHERE user_id = $1 ORDER BY CASE priority WHEN 'essential' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, balance_cents DESC", [request.user!.id]);
-  response.json({ debts: result.rows.map(serializeDebt) });
-}));
-
-router.post("/debts", requireAuth, asyncRoute(async (request, response) => {
-  const parsed = debtSchema.safeParse(request.body);
-  if (!parsed.success) {
-    response.status(400).json({ message: "Confira os dados da dívida." });
-    return;
-  }
-  const data = parsed.data;
-  const result = await getDb().query("INSERT INTO debts (id, user_id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at", [randomUUID(), request.user!.id, data.name, data.creditor ?? null, cents(data.balance), cents(data.installment), data.dueDay ?? null, data.interestRate ?? null, data.priority, data.status, data.notes ?? null]);
-  response.status(201).json({ debt: serializeDebt(result.rows[0]) });
-}));
-
-router.patch("/debts/:id", requireAuth, asyncRoute(async (request, response) => {
-  const parsed = debtSchema.partial().safeParse(request.body);
-  if (!parsed.success) {
-    response.status(400).json({ message: "Dados de atualização da dívida inválidos." });
-    return;
-  }
-  const data = parsed.data;
-  const result = await getDb().query("UPDATE debts SET name = COALESCE($3, name), creditor = COALESCE($4, creditor), balance_cents = COALESCE($5, balance_cents), installment_cents = COALESCE($6, installment_cents), due_day = COALESCE($7, due_day), interest_rate = COALESCE($8, interest_rate), priority = COALESCE($9, priority), status = COALESCE($10, status), notes = COALESCE($11, notes), updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, name, creditor, balance_cents, installment_cents, due_day, interest_rate, priority, status, notes, created_at, updated_at", [request.params.id, request.user!.id, data.name ?? null, data.creditor ?? null, data.balance === undefined ? null : cents(data.balance), data.installment === undefined ? null : cents(data.installment), data.dueDay ?? null, data.interestRate ?? null, data.priority ?? null, data.status ?? null, data.notes ?? null]);
-  if (!result.rowCount) {
-    response.status(404).json({ message: "Dívida não encontrada." });
-    return;
-  }
-  response.json({ debt: serializeDebt(result.rows[0]) });
-}));
 
 router.get("/monthly", requireAuth, asyncRoute(async (request, response) => {
   const month = typeof request.query.month === "string" && monthSchema.safeParse(request.query.month).success ? request.query.month : todayIso().slice(0, 7);
@@ -827,7 +789,12 @@ router.post("/simulate", requireAuth, asyncRoute(async (request, response) => {
   const result = await getLaunches(request.user!.id);
   const profile = await getProfile(request.user!.id);
   const launches = result.rows.map(serializeLaunch);
-  response.json({ ...buildSimulation(launches, parsed.data.amount, parsed.data.installments, parsed.data.firstDueDate, profile?.safetyMargin), scenarios: buildSimulationScenarios(launches, parsed.data.amount, parsed.data.firstDueDate, profile?.safetyMargin) });
+  const dashboard = buildDashboard(launches, todayIso(), profile ?? fallbackProfile(launches));
+  const safetyMargin = profile?.safetyMargin ?? 600;
+  response.json({
+    ...buildSimulation(launches, parsed.data.amount, parsed.data.installments, parsed.data.firstDueDate, safetyMargin, dashboard.currentBalance),
+    scenarios: buildSimulationScenarios(launches, parsed.data.amount, parsed.data.firstDueDate, safetyMargin, dashboard.currentBalance),
+  });
 }));
 
 const adminRouter = Router();

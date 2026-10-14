@@ -360,18 +360,21 @@ function formatMoney(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 }
 
-export function buildSimulation(launches: Launch[], amount: number, installments: number, firstDueDate: string, safetyMargin = 600) {
+export function buildSimulation(launches: Launch[], amount: number, installments: number, firstDueDate: string, safetyMargin = 600, startingBalance = 0) {
   const first = new Date(`${firstDueDate}T00:00:00Z`);
   const monthly = amount / installments;
+  let balance = startingBalance;
   const projection = Array.from({ length: Math.max(8, Math.min(24, installments + 2)) }, (_, index) => {
     const date = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + index, 1));
     const prefix = date.toISOString().slice(0, 7);
-    const base = sum(launches.filter((launch) => launch.type === "entrada" && launch.dueDate.startsWith(prefix)))
-      - sum(launches.filter((launch) => launch.type !== "entrada" && launch.dueDate.startsWith(prefix)));
+    const monthlyIncome = sum(launches.filter((launch) => launch.type === "entrada" && launch.dueDate.startsWith(prefix)));
+    const monthlyExpenses = sum(launches.filter((launch) => launch.type !== "entrada" && launch.dueDate.startsWith(prefix)));
+    balance += monthlyIncome - monthlyExpenses;
     const active = index < installments;
+    balance -= active ? monthly : 0;
     return {
       label: new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).format(date),
-      balance: base - (active ? monthly : 0),
+      balance,
       active,
     };
   });
@@ -380,7 +383,7 @@ export function buildSimulation(launches: Launch[], amount: number, installments
   return { monthlyInstallment: monthly, projection, lowest, result };
 }
 
-export function buildSimulationScenarios(launches: Launch[], amount: number, firstDueDate: string, safetyMargin = 600) {
+export function buildSimulationScenarios(launches: Launch[], amount: number, firstDueDate: string, safetyMargin = 600, startingBalance = 0) {
   const options = [1, 3, 6, 10, 12, 18, 24].filter((installments) => installments <= 60 && installments <= Math.max(24, Math.ceil(amount / 0.01)));
-  return options.map((installments) => ({ installments, ...buildSimulation(launches, amount, installments, firstDueDate, safetyMargin) }));
+  return options.map((installments) => ({ installments, ...buildSimulation(launches, amount, installments, firstDueDate, safetyMargin, startingBalance) }));
 }

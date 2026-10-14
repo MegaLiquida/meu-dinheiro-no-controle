@@ -65,8 +65,15 @@ describe("financial domain", () => {
     const scenarios = buildSimulationScenarios(launches, 1200, "2026-09-25", 1000);
     expect(scenarios.map((scenario) => scenario.installments)).toEqual([1, 3, 6, 10, 12, 18, 24]);
     expect(scenarios[0].monthlyInstallment).toBe(1200);
-    expect(scenarios[0].result).toBe("attention");
+    expect(scenarios[0].result).toBe("good");
     expect(scenarios.at(-1)?.monthlyInstallment).toBe(50);
+  });
+
+  it("accumulates the starting balance and installments across projection months", () => {
+    const simulation = buildSimulation([], 1200, 2, "2026-10-01", 0, 1000);
+    expect(simulation.projection.slice(0, 3).map((month) => month.balance)).toEqual([400, -200, -200]);
+    expect(simulation.lowest).toBe(-200);
+    expect(simulation.result).toBe("danger");
   });
 });
 
