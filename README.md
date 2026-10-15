@@ -111,6 +111,8 @@ A API estará disponível no mesmo host do frontend:
 - `GET /api/health`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/password-reset/request`
+- `POST /api/auth/password-reset/confirm`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 - `GET /api/dashboard`
@@ -156,8 +158,12 @@ O arquivo `render.yaml` foi preparado para o serviço web na branch `projeto`.
    - `ADMIN_NAME`: nome do primeiro proprietário.
    - `ADMIN_EMAIL`: e-mail do primeiro proprietário.
    - `ADMIN_PASSWORD`: senha inicial do primeiro proprietário.
+   - `APP_URL`: URL pública HTTPS do Web Service, sem barra final.
+   - `EMAIL_PROVIDER`: use `resend` em produção.
+   - `EMAIL_FROM`: remetente verificado no Resend, por exemplo `Meu Dinheiro no Controle <noreply@seudominio.com>`.
+   - `RESEND_API_KEY`: chave do Resend, somente como segredo do Render.
 4. Faça o deploy pelo Blueprint ou sincronize o `render.yaml`.
-5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta esperada é `{"ok":true,"database":"connected"}`.
+5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta deve indicar `database: "connected"` e `passwordResetEmail: "configured"`.
 
 O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, despesas essenciais, negociações, planos de recuperação, pagamentos, revisões, ações, limites, metas, importações e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
 
@@ -169,7 +175,7 @@ O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas 
 
 A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
 
-O produto já inclui troca de senha autenticada, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados, notificações internas e a fundação de ingestão Open Finance. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. A fundação Open Finance não ativa nenhum banco automaticamente: o provedor ainda precisa ser escolhido, contratado e configurado com consentimento, URLs de retorno e segredos exclusivamente no Render. O sistema não armazena senhas bancárias; transações externas entram como pendentes e só viram lançamentos após revisão do usuário. Recuperação de senha por e-mail, convites com envio de e-mail e Row-Level Security do PostgreSQL ainda devem ser ativados antes de uma operação pública em escala.
+O produto já inclui troca de senha autenticada, recuperação de senha por e-mail com token único, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados, notificações internas e a fundação de ingestão Open Finance. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. A fundação Open Finance não ativa nenhum banco automaticamente: o provedor ainda precisa ser escolhido, contratado e configurado com consentimento, URLs de retorno e segredos exclusivamente no Render. O sistema não armazena senhas bancárias; transações externas entram como pendentes e só viram lançamentos após revisão do usuário. Convites com envio de e-mail e Row-Level Security do PostgreSQL ainda devem ser ativados antes de uma operação pública em escala.
 
 ## Validação
 

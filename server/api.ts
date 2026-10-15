@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
@@ -9,8 +9,11 @@ import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
 import { acceptImportedTransaction, updateImportedTransactionReview } from "./openfinance";
+import { isPasswordResetEmailConfigured, passwordResetEmailStatus, sendPasswordResetEmail } from "./email";
 
 const router = Router();
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
+const passwordResetAttempts = new Map<string, { count: number; resetAt: number }>();
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use uma data no formato AAAA-MM-DD.");
 const preciseMoney = <T extends z.ZodType<number>>(schema: T) => schema.refine((value) => {
@@ -56,6 +59,8 @@ const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Use um mês no formato AA
 const budgetSchema = z.object({ category: z.string().trim().min(2).max(60), month: monthSchema, limit: legacyMoneySchema });
 const goalSchema = z.object({ name: z.string().trim().min(2).max(120), target: positiveLegacyMoneySchema, current: legacyMoneySchema.default(0), dueDate: dateSchema.nullable().optional(), status: z.enum(["active", "completed", "paused"]).default("active") });
 const changePasswordSchema = z.object({ currentPassword: z.string().min(8).max(200), newPassword: z.string().min(8).max(200) });
+const passwordResetRequestSchema = z.object({ email: z.string().trim().email() });
+const passwordResetConfirmSchema = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), newPassword: z.string().min(8).max(200) });
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next);
@@ -77,6 +82,22 @@ function validDate(value: string) {
 
 function cents(amount: number) {
   return moneyToCents(amount);
+}
+
+function hashPasswordResetToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function canRequestPasswordReset(key: string) {
+  const now = Date.now();
+  const current = passwordResetAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    passwordResetAttempts.set(key, { count: 1, resetAt: now + 15 * 60 * 1000 });
+    return true;
+  }
+  if (current.count >= 5) return false;
+  current.count += 1;
+  return true;
 }
 
 function money(amountCents: number) {
@@ -293,7 +314,7 @@ router.get("/health", asyncRoute(async (_request, response) => {
     return;
   }
   await getDb().query("SELECT 1");
-  response.json({ ok: true, database: "connected" });
+  response.json({ ok: true, database: "connected", passwordResetEmail: passwordResetEmailStatus() });
 }));
 
 router.post("/auth/register", asyncRoute(async (request, response) => {
@@ -349,6 +370,88 @@ router.post("/auth/login", asyncRoute(async (request, response) => {
   await createSession(user.id, response);
   await recordAudit(user.id, user.id, "auth_login");
   response.json({ user: serializeUser(user) });
+}));
+
+router.post("/auth/password-reset/request", asyncRoute(async (request, response) => {
+  if (!requireDatabase(request, response)) return;
+  const parsed = passwordResetRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Informe um e-mail válido." });
+    return;
+  }
+  if (!canRequestPasswordReset(request.ip || "unknown")) {
+    response.status(429).json({ message: "Muitos pedidos. Aguarde alguns minutos e tente novamente." });
+    return;
+  }
+  if (!isPasswordResetEmailConfigured()) {
+    response.status(503).json({ message: "A recuperação por e-mail ainda não está configurada." });
+    return;
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const result = await getDb().query<{ id: string; name: string; email: string }>(
+    "SELECT id, name, email FROM users WHERE email = $1 AND status = 'active'",
+    [email],
+  );
+  const user = result.rows[0];
+  if (user) {
+    const token = randomBytes(32).toString("hex");
+    const tokenHash = hashPasswordResetToken(token);
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+    await withTransaction(async (client) => {
+      await client.query("DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at <= NOW()", [user.id]);
+      await client.query(
+        "INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, requested_ip) VALUES ($1, $2, $3, $4, $5)",
+        [randomUUID(), user.id, tokenHash, expiresAt, request.ip || null],
+      );
+    });
+    try {
+      await sendPasswordResetEmail({ to: user.email, name: user.name, token });
+    } catch (error) {
+      console.error("Password reset email delivery failed", error instanceof Error ? error.message : String(error));
+      await getDb().query("DELETE FROM password_reset_tokens WHERE token_hash = $1", [tokenHash]);
+    }
+  }
+
+  response.status(202).json({ message: "Se existir uma conta ativa com esse e-mail, você receberá as instruções em instantes." });
+}));
+
+router.post("/auth/password-reset/confirm", asyncRoute(async (request, response) => {
+  if (!requireDatabase(request, response)) return;
+  const parsed = passwordResetConfirmSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "O link é inválido ou a nova senha não atende aos requisitos." });
+    return;
+  }
+
+  const tokenHash = hashPasswordResetToken(parsed.data.token);
+  const outcome = await withTransaction(async (client) => {
+    const tokenResult = await client.query<{ id: string; user_id: string }>(
+      "SELECT id, user_id FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW() FOR UPDATE",
+      [tokenHash],
+    );
+    const token = tokenResult.rows[0];
+    if (!token) return null;
+
+    const userResult = await client.query<{ id: string }>("SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE", [token.user_id]);
+    const user = userResult.rows[0];
+    if (!user) return null;
+
+    await client.query("UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1", [user.id, await hashPassword(parsed.data.newPassword)]);
+    await client.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL", [token.id]);
+    await client.query("DELETE FROM sessions WHERE user_id = $1", [user.id]);
+    await client.query(
+      "INSERT INTO audit_logs (id, actor_user_id, target_user_id, action, metadata) VALUES ($1, $2, $2, $3, $4::jsonb)",
+      [randomUUID(), user.id, "auth_password_reset", JSON.stringify({ tokenId: token.id })],
+    );
+    return user.id;
+  });
+
+  if (!outcome) {
+    response.status(400).json({ message: "O link é inválido, expirou ou já foi utilizado." });
+    return;
+  }
+  response.status(204).end();
 }));
 
 router.post("/auth/logout", asyncRoute(async (request, response) => {

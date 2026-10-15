@@ -1,7 +1,7 @@
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ query: vi.fn() }));
+const mocks = vi.hoisted(() => ({ query: vi.fn(), sendPasswordResetEmail: vi.fn() }));
 
 vi.mock("./db", () => ({
   getDb: () => ({ query: mocks.query }),
@@ -23,7 +23,15 @@ vi.mock("./auth", () => ({
   verifyPassword: vi.fn(async () => true),
 }));
 
+vi.mock("./email", () => ({
+  isPasswordResetEmailConfigured: () => true,
+  passwordResetEmailStatus: () => "configured",
+  sendPasswordResetEmail: mocks.sendPasswordResetEmail,
+}));
+
 import api from "./api";
+
+process.env.DATABASE_URL = "postgresql://test";
 
 describe("API integration contracts", () => {
   const app = express();
@@ -46,6 +54,7 @@ describe("API integration contracts", () => {
 
   beforeEach(() => {
     mocks.query.mockReset();
+    mocks.sendPasswordResetEmail.mockReset();
     const today = new Date().toISOString().slice(0, 10);
     mocks.query
       .mockResolvedValueOnce({ rows: [] })
@@ -136,5 +145,67 @@ describe("API integration contracts", () => {
     for (const [, params] of mocks.query.mock.calls as [unknown, unknown[]][]) {
       expect(params).toContain("user-a");
     }
+  });
+
+  it("does not reveal whether an email exists when requesting a reset", async () => {
+    const requestReset = async (rowCount: number) => {
+      mocks.query.mockReset();
+      mocks.query.mockResolvedValueOnce({ rowCount, rows: rowCount ? [{ id: "user-a", name: "Ana", email: "ana@example.com" }] : [] });
+      if (rowCount) mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }).mockResolvedValueOnce({ rowCount: 1, rows: [] });
+      const response = await fetch(`${baseUrl}/api/auth/password-reset/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: rowCount ? "ana@example.com" : "naoexiste@example.com" }),
+      });
+      return { status: response.status, body: await response.json() as { message: string } };
+    };
+
+    const existing = await requestReset(1);
+    const unknown = await requestReset(0);
+
+    expect(existing).toEqual(unknown);
+    expect(existing.status).toBe(202);
+    expect(mocks.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates the password, invalidates sessions and consumes a reset token once", async () => {
+    mocks.query.mockReset();
+    mocks.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "token-1", user_id: "user-a" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "user-a" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const response = await fetch(`${baseUrl}/api/auth/password-reset/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "a".repeat(64), newPassword: "senha-nova-segura" }),
+    });
+
+    expect(response.status).toBe(204);
+    expect(mocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM sessions WHERE user_id = $1"),
+      ["user-a"],
+    );
+    expect(mocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE password_reset_tokens SET used_at = NOW()"),
+      ["token-1"],
+    );
+  });
+
+  it("rejects an expired or already used reset token", async () => {
+    mocks.query.mockReset();
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const response = await fetch(`${baseUrl}/api/auth/password-reset/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "b".repeat(64), newPassword: "senha-nova-segura" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message: "O link é inválido, expirou ou já foi utilizado." });
   });
 });

@@ -273,6 +273,8 @@ export const api = {
   me: () => request<{ user: User }>("/auth/me"),
   login: (body: { email: string; password: string }) => request<{ user: User }>("/auth/login", { method: "POST", body: JSON.stringify(body) }),
   register: (body: { name: string; email: string; password: string }) => request<{ user: User }>("/auth/register", { method: "POST", body: JSON.stringify(body) }),
+  requestPasswordReset: (email: string) => request<{ message: string }>("/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email }) }),
+  confirmPasswordReset: (body: { token: string; newPassword: string }) => request<void>("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   changePassword: (body: { currentPassword: string; newPassword: string }) => request<void>("/auth/change-password", { method: "POST", body: JSON.stringify(body) }),
   exportData: () => fetch("/api/export", { credentials: "include" }).then(async (response) => { if (!response.ok) throw new Error("Não foi possível exportar seus dados."); return response.blob(); }),

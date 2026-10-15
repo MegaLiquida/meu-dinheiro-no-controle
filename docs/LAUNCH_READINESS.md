@@ -26,6 +26,15 @@ Liberar o **beta fechado** somente para poucos usuários convidados, com dados r
 - [ ] `ADMIN_PASSWORD` foi substituída por segredo forte e exclusivo.
 - [ ] Nenhum segredo aparece no Git, logs, screenshots ou documentação.
 - [ ] O acesso administrativo foi testado com uma conta separada da conta piloto.
+- [ ] `APP_URL`, `EMAIL_PROVIDER=resend`, `EMAIL_FROM` e `RESEND_API_KEY` estão configurados somente no Render.
+
+### Recuperação de acesso
+
+- [ ] O pedido de recuperação responde com a mesma mensagem para e-mails existentes e inexistentes.
+- [ ] O e-mail de teste chega ao destinatário e o link aponta para o domínio HTTPS correto.
+- [ ] O token expira em 30 minutos, pode ser usado uma única vez e não fica armazenado em texto puro.
+- [ ] Redefinir a senha invalida as sessões anteriores e gera registro de auditoria.
+- [ ] Tokens inválidos, expirados ou já usados são recusados sem alterar a conta.
 
 ### Isolamento entre usuários
 
@@ -45,7 +54,6 @@ Liberar o **beta fechado** somente para poucos usuários convidados, com dados r
 
 ## Gate P1 — concluir durante o piloto
 
-- [ ] Recuperação de senha por e-mail.
 - [ ] Monitoramento de erro, disponibilidade e tempo de resposta.
 - [ ] Teste de acessibilidade com teclado, contraste, foco e mensagens de erro.
 - [ ] Revisão de linguagem com usuários não técnicos.
