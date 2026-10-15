@@ -29,7 +29,7 @@ const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const addDays = (iso: string, days: number) => { const date = new Date(`${iso}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return isoDate(date); };
 
 function AppLogo() {
-  return <div className="brand-lockup"><div className="brand-mark" aria-hidden="true"><Leaf size={18} strokeWidth={2.4} /></div><div><div className="brand-name">Meu Dinheiro</div><div className="brand-subtitle">no controle</div></div></div>;
+  return <div className="brand-lockup"><div className="brand-mark" aria-hidden="true"><Leaf size={18} strokeWidth={2.4} /></div><div><div className="brand-name">Meu Dinheiro</div><div className="brand-subtitle">reconstrução financeira</div></div></div>;
 }
 
 function NavButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {

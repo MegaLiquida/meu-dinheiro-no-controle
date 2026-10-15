@@ -30,8 +30,8 @@ export default function Auth() {
       <div className="auth-glow auth-glow-left" />
       <div className="auth-glow auth-glow-right" />
       <section className="auth-card">
-        <div className="auth-brand"><span className="brand-mark"><Leaf size={21} /></span><span><strong>Meu Dinheiro</strong><small>no controle</small></span></div>
-        <div className="auth-heading"><span className="eyebrow">seu dinheiro, sem mistério</span><h1>{mode === "login" ? "Entre na sua conta." : "Comece a se organizar."}</h1><p>{mode === "login" ? "Acompanhe seus compromissos e decida com mais tranquilidade." : "Crie seu ambiente financeiro pessoal em poucos passos."}</p></div>
+        <div className="auth-brand"><span className="brand-mark"><Leaf size={21} /></span><span><strong>Meu Dinheiro</strong><small>reconstrução financeira</small></span></div>
+        <div className="auth-heading"><span className="eyebrow">reconstrução financeira · um passo de cada vez</span><h1>{mode === "login" ? "Retome o controle com calma." : "Comece sua reconstrução financeira."}</h1><p>{mode === "login" ? "Veja o que entra, proteja o essencial e escolha um próximo passo possível." : "Crie seu espaço para organizar contas, dívidas e próximos passos sem julgamento."}</p></div>
         <form className="auth-form" onSubmit={submit}>
           {mode === "register" && <label>seu nome<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Como podemos chamar você?" /></label>}
           <label>e-mail<input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@email.com" /></label>
@@ -39,7 +39,7 @@ export default function Auth() {
           <button className="primary-button auth-submit" type="submit" disabled={submitting}>{mode === "login" ? <LogIn size={17} /> : <UserPlus size={17} />}{submitting ? "aguarde..." : mode === "login" ? "entrar" : "criar minha conta"}</button>
         </form>
         <div className="auth-switch">{mode === "login" ? "Ainda não tem uma conta?" : "Já tem uma conta?"}<button type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>{mode === "login" ? "Criar conta" : "Entrar"}</button></div>
-        <p className="auth-note">Seus dados financeiros ficam vinculados somente à sua conta.</p>
+        <p className="auth-note">Sua conta é pessoal: seus dados financeiros ficam vinculados somente a você.</p>
       </section>
     </main>
   );

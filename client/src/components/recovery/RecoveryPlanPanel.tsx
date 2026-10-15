@@ -9,7 +9,7 @@ export default function RecoveryPlanPanel({ debts }: { debts: Debt[] }) {
   const [plans, setPlans] = useState<RecoveryPlan[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const [name, setName] = useState("Meu plano de recuperação");
+  const [name, setName] = useState("Meu primeiro plano possível");
   const [loading, setLoading] = useState(true);
 
   async function load() {

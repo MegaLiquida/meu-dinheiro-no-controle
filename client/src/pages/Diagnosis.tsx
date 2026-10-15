@@ -141,7 +141,7 @@ export default function Diagnosis() {
   if (error) return <div className="persistent-error" role="alert"><strong>Seu diagnóstico não carregou.</strong><span>{error}</span><button className="primary-button" type="button" onClick={() => void reload()}>Tentar novamente</button></div>;
 
   return <div className="page-stack page-enter diagnosis-page">
-    <div className="section-heading"><div><div className="eyebrow">vamos entender juntos</div><h1>Entender minha situação</h1></div><p className="section-detail">Responda com o que souber. Uma estimativa já ajuda a descobrir quanto pode ir para as dívidas sem faltar para o básico.</p></div>
+    <div className="section-heading"><div><div className="eyebrow">ponto de partida · sem julgamento</div><h1>Proteger o básico antes de negociar</h1></div><p className="section-detail">Responda com o que souber. Vamos transformar sua realidade em um ponto de partida para um plano que caiba na sua vida.</p></div>
 
     <section className="diagnosis-summary" aria-live="polite">
       <div><span>quanto entra por mês</span><strong>{money(diagnosis?.normalizedMonthlyIncome ?? normalizedIncome)}</strong><small>estimativa considerando a frequência informada</small></div>
