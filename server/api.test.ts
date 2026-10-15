@@ -13,8 +13,10 @@ vi.mock("./auth", () => ({
   destroySession: vi.fn(),
   getUserFromRequest: vi.fn(),
   hashPassword: vi.fn(async () => "hash"),
-  requireAuth: (request: { user?: unknown }, _response: unknown, next: () => void) => {
-    request.user = { id: "user-1", name: "Teste", email: "teste@example.com", role: "client", status: "active" };
+  requireAuth: (request: { user?: unknown; headers?: Record<string, string | string[] | undefined> }, _response: unknown, next: () => void) => {
+    const header = request.headers?.["x-test-user"];
+    const id = typeof header === "string" && header ? header : "user-1";
+    request.user = { id, name: `Teste ${id}`, email: `${id}@example.com`, role: "client", status: "active" };
     next();
   },
   requireRole: () => (_request: unknown, _response: unknown, next: () => void) => next(),
@@ -74,5 +76,65 @@ describe("API integration contracts", () => {
     expect(body.projection.slice(0, 3).map((month) => month.balance)).toEqual([400, -200, -200]);
     expect(body.result).toBe("danger");
     expect(mocks.query).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps launch lists scoped to the authenticated user", async () => {
+    mocks.query.mockReset();
+    mocks.query.mockImplementation(async (_sql: unknown, params: unknown[]) => {
+      const userId = String(params[0]);
+      return {
+        rowCount: 1,
+        rows: [{
+          id: `launch-${userId}`,
+          type: "conta",
+          name: `Conta de ${userId}`,
+          amount_cents: 12500,
+          due_date: "2026-11-10",
+          status: "pending",
+          installments_remaining: null,
+          paid_at: null,
+          recurring_id: null,
+          purchase_installment_id: null,
+          category: "housing",
+        }],
+      };
+    });
+
+    for (const userId of ["user-a", "user-b"]) {
+      const response = await fetch(`${baseUrl}/api/launches`, { headers: { "x-test-user": userId } });
+      const body = await response.json() as { launches: { id: string }[] };
+
+      expect(response.status).toBe(200);
+      expect(body.launches.map((launch) => launch.id)).toEqual([`launch-${userId}`]);
+    }
+  });
+
+  it("does not update a launch that belongs to another user", async () => {
+    mocks.query.mockReset();
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const response = await fetch(`${baseUrl}/api/launches/launch-user-b`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-test-user": "user-a" },
+      body: JSON.stringify({ status: "paid" }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE id = $1 AND user_id = $2"),
+      ["launch-user-b", "user-a"],
+    );
+  });
+
+  it("exports only data queried for the authenticated user", async () => {
+    mocks.query.mockReset();
+    mocks.query.mockResolvedValue({ rowCount: 0, rows: [] });
+
+    const response = await fetch(`${baseUrl}/api/export`, { headers: { "x-test-user": "user-a" } });
+
+    expect(response.status).toBe(200);
+    for (const [, params] of mocks.query.mock.calls as [unknown, unknown[]][]) {
+      expect(params).toContain("user-a");
+    }
   });
 });
