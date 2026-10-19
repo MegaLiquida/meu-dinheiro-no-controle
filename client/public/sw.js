@@ -1,4 +1,4 @@
-const CACHE_NAME = "mdnc-app-shell-v1";
+const CACHE_NAME = "mdnc-app-shell-v2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -22,11 +22,12 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      if (!response.ok || response.type === "opaque") return response;
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+    fetch(request).then((response) => {
+      if (response.ok && response.type !== "opaque") {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+      }
       return response;
-    })),
+    }).catch(() => caches.match(request)),
   );
 });

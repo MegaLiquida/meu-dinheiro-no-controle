@@ -327,7 +327,7 @@ export const api = {
   notifications: () => request<{ notifications: Notification[]; unread: number }>("/notifications"),
   markNotificationRead: (id: string) => request<{ notification: Notification }>(`/notifications/${id}/read`, { method: "PATCH" }),
   connections: () => request<{ providerConfigured: boolean; providerSelectionRequired: boolean; sandbox: boolean; connections: FinancialConnection[] }>("/connections"),
-  pluggyConnectToken: () => request<{ accessToken: string; includeSandbox: boolean; connectorIds: number[]; connectorFilterAvailable: boolean }>("/connections/pluggy/connect-token", { method: "POST", body: JSON.stringify({}) }),
+  pluggyConnectToken: () => request<{ accessToken: string; includeSandbox: boolean }>("/connections/pluggy/connect-token", { method: "POST", body: JSON.stringify({}) }),
   registerPluggyItem: (itemId: string) => request<{ connection: FinancialConnection }>("/connections/pluggy/item", { method: "POST", body: JSON.stringify({ itemId }) }),
   syncConnection: (id: string) => request<{ synced: true; created: number; updated: number }>(`/connections/${id}/sync`, { method: "POST", body: JSON.stringify({}) }),
   importedTransactions: (state?: ImportedTransaction["state"]) => request<{ transactions: ImportedTransaction[] }>(`/imported-transactions${state ? `?state=${encodeURIComponent(state)}` : ""}`),

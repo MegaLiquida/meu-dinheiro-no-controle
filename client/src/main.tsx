@@ -4,7 +4,7 @@ import "./index.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((error) => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).then((registration) => registration.update()).catch((error) => {
       console.warn("Não foi possível registrar a experiência offline da PWA.", error);
     });
   });

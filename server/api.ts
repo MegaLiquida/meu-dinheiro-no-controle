@@ -10,7 +10,7 @@ import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
 import { acceptImportedTransaction, ingestImportedTransactions, updateImportedTransactionReview } from "./openfinance";
 import { isPasswordResetEmailConfigured, passwordResetEmailStatus, sendPasswordResetEmail } from "./email";
-import { createPluggyConnectToken, fetchPluggyTransactions, getPluggyItem, getPluggySandboxConnectorIds, isPluggyConfigured, isPluggySandbox, pluggyConnectionStatus, pluggyConsentStatus, pluggyInstitutionName } from "./pluggy";
+import { createPluggyConnectToken, fetchPluggyTransactions, getPluggyItem, isPluggyConfigured, isPluggySandbox, pluggyConnectionStatus, pluggyConsentStatus, pluggyInstitutionName } from "./pluggy";
 
 const router = Router();
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
@@ -770,18 +770,7 @@ router.post("/connections/pluggy/connect-token", requireAuth, asyncRoute(async (
     return;
   }
   const accessToken = await createPluggyConnectToken(request.user!.id);
-  const includeSandbox = isPluggySandbox();
-  let connectorIds: number[] = [];
-  let connectorFilterAvailable = !includeSandbox;
-  if (includeSandbox) {
-    try {
-      connectorIds = await getPluggySandboxConnectorIds();
-      connectorFilterAvailable = connectorIds.length > 0;
-    } catch (error) {
-      console.warn("Pluggy sandbox connector filter unavailable; opening the widget without the optional filter.", error instanceof Error ? error.message : String(error));
-    }
-  }
-  response.json({ accessToken, includeSandbox, connectorIds, connectorFilterAvailable });
+  response.json({ accessToken, includeSandbox: isPluggySandbox() });
 }));
 
 router.post("/connections/pluggy/item", requireAuth, asyncRoute(async (request, response) => {
