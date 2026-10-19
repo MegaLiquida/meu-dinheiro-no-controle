@@ -19,6 +19,7 @@ export default function OpenFinancePanel() {
   const [connectToken, setConnectToken] = useState<string | null>(null);
   const [includeSandbox, setIncludeSandbox] = useState(false);
   const [connectorIds, setConnectorIds] = useState<number[]>([]);
+  const [connectorFilterAvailable, setConnectorFilterAvailable] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   async function load() {
@@ -82,6 +83,7 @@ export default function OpenFinancePanel() {
       const result = await api.pluggyConnectToken();
       setIncludeSandbox(result.includeSandbox);
       setConnectorIds(result.connectorIds ?? []);
+      setConnectorFilterAvailable(result.connectorFilterAvailable ?? false);
       setConnectToken(result.accessToken);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Não foi possível iniciar a conexão bancária.";
@@ -164,7 +166,7 @@ export default function OpenFinancePanel() {
       <span className="settings-note">{sandbox ? "Ambiente sandbox: use uma conta de teste da Pluggy Bank." : "Consentimento pode ser revogado pelo usuário a qualquer momento."}</span>
     </div>
     {connectionError && <div className="open-finance-error" role="alert"><strong>Não foi possível concluir a conexão</strong><p>{connectionError}</p><button className="secondary-admin-button" type="button" onClick={() => void openPluggy()} disabled={busyId === "connect"}><Link2 size={15} /> tentar novamente</button></div>}
-    {connectToken && <div className="pluggy-widget-shell"><PluggyConnect connectToken={connectToken} includeSandbox={includeSandbox} connectorIds={connectorIds.length ? connectorIds : undefined} selectedConnectorId={includeSandbox && connectorIds.length === 1 ? connectorIds[0] : undefined} allowFullscreen language="pt" theme="light" onSuccess={(data) => void registerPluggyItem(data)} onError={(error) => handlePluggyError(error.message)} onClose={() => setConnectToken(null)} /></div>}
+    {connectToken && <div className="pluggy-widget-shell"><PluggyConnect connectToken={connectToken} includeSandbox={includeSandbox} connectorIds={connectorIds.length ? connectorIds : undefined} selectedConnectorId={connectorFilterAvailable && includeSandbox && connectorIds.length === 1 ? connectorIds[0] : undefined} allowFullscreen language="pt" theme="light" onSuccess={(data) => void registerPluggyItem(data)} onError={(error) => handlePluggyError(error.message)} onLoadError={(error) => handlePluggyError(error.message)} onClose={() => setConnectToken(null)} /></div>}
     {connections.length > 0 && <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><div><strong>{connection.institutionName}</strong><span>{connection.provider} · {connection.statusLabel}</span></div><div className="connection-row-actions"><small>{connection.lastSyncedAt ? `última sincronização ${new Date(connection.lastSyncedAt).toLocaleString("pt-BR")}` : "aguardando sincronização"}</small><button className="icon-action" type="button" aria-label={`Atualizar ${connection.institutionName}`} disabled={busyId === connection.id} onClick={() => void sync(connection)}><RefreshCw size={14} /></button></div></div>)}</div>}
     {transactions.length > 0 && <div className="imported-review"><div className="panel-heading"><div><span className="eyebrow">confira antes de registrar</span><h3>Transações encontradas</h3></div><span className="review-count">{transactions.length}</span></div><div className="imported-transaction-list">{transactions.map((transaction) => <div className="imported-transaction-row" key={transaction.id}><div><strong>{transaction.merchantName || transaction.description}</strong><span>{date(transaction.transactionDate)} · {transaction.direction === "inflow" ? "entrada" : "saída"}</span></div><b className={transaction.direction === "inflow" ? "inflow" : "outflow"}>{transaction.direction === "inflow" ? "+" : "-"}{money(transaction.amount)}</b><div className="imported-transaction-actions"><button className="icon-action" type="button" aria-label="Adicionar transação" disabled={busyId === transaction.id} onClick={() => void review(transaction, "accept")}><Check size={15} /></button><button className="icon-action danger-action" type="button" aria-label="Ignorar transação" disabled={busyId === transaction.id} onClick={() => void review(transaction, "ignore")}><X size={15} /></button></div></div>)}</div></div>}
   </section>;

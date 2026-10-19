@@ -33,7 +33,7 @@ describe("Pluggy sandbox client", () => {
     vi.resetModules();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ apiKey: "api-key-test" }))
-      .mockResolvedValueOnce(response({ results: [{ id: 999, name: "Pluggy Bank" }] }));
+      .mockResolvedValueOnce(response({ results: [{ id: 999, name: "Pluggy Bank", isSandbox: true }, { id: 601, name: "Itaú", isSandbox: false }] }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { getPluggySandboxConnectorIds } = await import("./pluggy");

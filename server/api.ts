@@ -771,8 +771,17 @@ router.post("/connections/pluggy/connect-token", requireAuth, asyncRoute(async (
   }
   const accessToken = await createPluggyConnectToken(request.user!.id);
   const includeSandbox = isPluggySandbox();
-  const connectorIds = includeSandbox ? await getPluggySandboxConnectorIds() : [];
-  response.json({ accessToken, includeSandbox, connectorIds });
+  let connectorIds: number[] = [];
+  let connectorFilterAvailable = !includeSandbox;
+  if (includeSandbox) {
+    try {
+      connectorIds = await getPluggySandboxConnectorIds();
+      connectorFilterAvailable = connectorIds.length > 0;
+    } catch (error) {
+      console.warn("Pluggy sandbox connector filter unavailable; opening the widget without the optional filter.", error instanceof Error ? error.message : String(error));
+    }
+  }
+  response.json({ accessToken, includeSandbox, connectorIds, connectorFilterAvailable });
 }));
 
 router.post("/connections/pluggy/item", requireAuth, asyncRoute(async (request, response) => {

@@ -37,7 +37,7 @@ type PluggyTransaction = {
 };
 
 type PluggyListResponse<T> = { results?: T[]; totalPages?: number; page?: number; next?: string | null };
-type PluggyConnector = { id?: number | null };
+type PluggyConnector = { id?: number | null; isSandbox?: boolean | null };
 
 let cachedSandboxConnectorIds: { value: number[]; expiresAt: number } | null = null;
 
@@ -58,7 +58,7 @@ export async function getPluggySandboxConnectorIds() {
   if (cachedSandboxConnectorIds && cachedSandboxConnectorIds.expiresAt > Date.now()) return cachedSandboxConnectorIds.value;
   const result = await pluggyRequest<PluggyListResponse<PluggyConnector> | PluggyConnector[]>("/connectors?sandbox=true", {}, await getPluggyApiKey());
   const connectors = Array.isArray(result) ? result : result.results ?? [];
-  const ids = connectors.map((connector) => connector.id).filter((id): id is number => typeof id === "number" && Number.isInteger(id));
+  const ids = connectors.filter((connector) => connector.isSandbox === true).map((connector) => connector.id).filter((id): id is number => typeof id === "number" && Number.isInteger(id));
   if (!ids.length) throw new Error("A Pluggy não retornou um conector de teste disponível.");
   cachedSandboxConnectorIds = { value: ids, expiresAt: Date.now() + 15 * 60 * 1000 };
   return ids;
