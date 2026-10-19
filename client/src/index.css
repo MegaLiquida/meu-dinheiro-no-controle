@@ -28,6 +28,12 @@
 body.bank-connection-open { overflow: hidden; }
 body.bank-connection-open .mobile-bottom-nav { display: none; }
 body.bank-connection-open iframe[title="Pluggy"] { overflow: auto !important; touch-action: pan-y !important; }
+@media (max-width: 500px) {
+  body.bank-connection-open [id$="_modal-overlay"] { height: 100dvh !important; min-height: 100dvh !important; }
+  body.bank-connection-open [id$="_modal"] { height: 100dvh !important; max-height: 100dvh !important; }
+  body.bank-connection-open [class$="_modal-content"], body.bank-connection-open [class$="_container"] { height: 100dvh !important; max-height: 100dvh !important; }
+  body.bank-connection-open iframe[title="Pluggy"] { height: 100dvh !important; max-height: 100dvh !important; }
+}
 html { min-width: 320px; background: var(--paper); }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--paper); }
 button, input, select, textarea { font: inherit; }

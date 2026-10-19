@@ -45,17 +45,34 @@ export default function OpenFinancePanel() {
 
   useEffect(() => {
     if (!connectToken) return;
+    const syncWidgetViewport = () => {
+      const viewportHeight = Math.max(320, Math.round(window.visualViewport?.height ?? window.innerHeight));
+      const height = `${viewportHeight}px`;
+      document.querySelectorAll<HTMLElement>('[id$="_modal-overlay"], [id$="_modal"], [class$="_modal-content"], [class$="_container"], iframe[title="Pluggy"]').forEach((element) => {
+        element.style.setProperty("height", height, "important");
+        element.style.setProperty("max-height", height, "important");
+      });
+    };
     const enableWidgetScroll = () => {
       document.querySelectorAll<HTMLIFrameElement>('iframe[title="Pluggy"]').forEach((frame) => {
         frame.setAttribute("scrolling", "yes");
         frame.style.setProperty("overflow", "auto", "important");
         frame.style.setProperty("touch-action", "pan-y", "important");
+        frame.style.setProperty("overscroll-behavior", "contain", "important");
       });
+      syncWidgetViewport();
     };
     enableWidgetScroll();
     const observer = new MutationObserver(enableWidgetScroll);
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", syncWidgetViewport);
+    window.addEventListener("resize", syncWidgetViewport);
+    return () => {
+      observer.disconnect();
+      visualViewport?.removeEventListener("resize", syncWidgetViewport);
+      window.removeEventListener("resize", syncWidgetViewport);
+    };
   }, [connectToken]);
 
   async function openPluggy() {
