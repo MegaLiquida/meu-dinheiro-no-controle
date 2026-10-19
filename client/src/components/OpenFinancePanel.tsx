@@ -18,6 +18,8 @@ export default function OpenFinancePanel() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [connectToken, setConnectToken] = useState<string | null>(null);
   const [includeSandbox, setIncludeSandbox] = useState(false);
+  const [connectorIds, setConnectorIds] = useState<number[]>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -58,12 +60,16 @@ export default function OpenFinancePanel() {
 
   async function openPluggy() {
     setBusyId("connect");
+    setConnectionError(null);
     try {
       const result = await api.pluggyConnectToken();
       setIncludeSandbox(result.includeSandbox);
+      setConnectorIds(result.connectorIds ?? []);
       setConnectToken(result.accessToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível iniciar a conexão bancária.");
+      const message = error instanceof Error ? error.message : "Não foi possível iniciar a conexão bancária.";
+      setConnectionError(message);
+      toast.error(message);
     } finally {
       setBusyId(null);
     }
@@ -72,7 +78,9 @@ export default function OpenFinancePanel() {
   async function registerPluggyItem(data: PluggyItemData) {
     const itemId = data.item?.id;
     if (!itemId) {
-      toast.error("A Pluggy não retornou o identificador da conexão.");
+      const message = "A Pluggy não retornou o identificador da conexão. Tente novamente.";
+      setConnectionError(message);
+      toast.error(message);
       setConnectToken(null);
       return;
     }
@@ -83,7 +91,9 @@ export default function OpenFinancePanel() {
       await load();
       toast.success("Banco conectado. Revise as transações encontradas antes de registrá-las.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "A conta foi conectada, mas não foi possível sincronizar os dados.");
+      const message = error instanceof Error ? error.message : "A conta foi conectada, mas não foi possível sincronizar os dados.";
+      setConnectionError(message);
+      toast.error(message);
     } finally {
       setBusyId(null);
     }
@@ -116,15 +126,28 @@ export default function OpenFinancePanel() {
     }
   }
 
+  function handlePluggyError(message: string) {
+    const normalized = message.toLocaleLowerCase("pt-BR");
+    const sandboxMismatch = includeSandbox && /(sandbox|teste|real|dados reais|demo)/i.test(normalized);
+    const friendlyMessage = sandboxMismatch
+      ? "O ambiente atual é de testes. Use somente o conector Pluggy Bank e as credenciais de teste. Bancos reais só ficam disponíveis após a liberação de produção na Pluggy."
+      : message || "A Pluggy não conseguiu concluir a conexão. Feche esta tela e tente novamente.";
+    setConnectionError(friendlyMessage);
+    setConnectToken(null);
+    toast.error(friendlyMessage);
+  }
+
   return <section className="panel open-finance-panel">
     <div className="panel-heading"><div><span className="eyebrow">integração em etapas</span><h2><Landmark size={17} /> Conexões bancárias</h2></div><ShieldCheck size={18} className="sparkle-icon" /></div>
-    <div className="open-finance-intro"><div className="open-finance-icon"><Link2 size={18} /></div><div><strong>{providerConfigured ? "Conexão Open Finance disponível" : "A base segura está pronta"}</strong><p>{providerConfigured ? "Autorize seu banco pelo ambiente oficial. O Meu Dinheiro não recebe nem armazena sua senha bancária." : "O servidor ainda precisa receber as credenciais do provedor Pluggy em ambiente seguro antes de liberar a conexão."}</p></div></div>
+    <div className="open-finance-intro"><div className="open-finance-icon"><Link2 size={18} /></div><div><strong>{providerConfigured ? (sandbox ? "Conexão de teste disponível" : "Conexão Open Finance disponível") : "A base segura está pronta"}</strong><p>{providerConfigured ? (sandbox ? "Você está no ambiente de demonstração. Para testar, use apenas o Pluggy Bank; o aplicativo não recebe nem armazena sua senha bancária." : "Autorize seu banco pelo ambiente oficial. O Meu Dinheiro não recebe nem armazena sua senha bancária.") : "O servidor ainda precisa receber as credenciais do provedor Pluggy em ambiente seguro antes de liberar a conexão."}</p></div></div>
+    {providerConfigured && <div className={`open-finance-mode-note ${sandbox ? "sandbox" : "live"}`} role="status"><strong>{sandbox ? "Modo de teste" : "Modo de produção"}</strong><p>{sandbox ? "Bancos reais não podem ser conectados com contas de teste. Selecione Pluggy Bank para continuar." : "A conexão usa o consentimento oficial do seu banco. Você pode revogar o acesso quando quiser."}</p></div>}
     <div className="open-finance-actions">
       {providerConfigured && <button className="secondary-admin-button" type="button" onClick={() => void openPluggy()} disabled={busyId === "connect" || Boolean(connectToken)}><Link2 size={15} /> {busyId === "connect" ? "abrindo..." : "conectar banco"}</button>}
       <button className="secondary-admin-button" type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> {loading ? "atualizando..." : "atualizar status"}</button>
-      <span className="settings-note">{sandbox ? "Ambiente sandbox: use uma conta de teste da Pluggy." : "Consentimento pode ser revogado pelo usuário a qualquer momento."}</span>
+      <span className="settings-note">{sandbox ? "Ambiente sandbox: use uma conta de teste da Pluggy Bank." : "Consentimento pode ser revogado pelo usuário a qualquer momento."}</span>
     </div>
-    {connectToken && <div className="pluggy-widget-shell"><PluggyConnect connectToken={connectToken} includeSandbox={includeSandbox} allowFullscreen={false} language="pt" theme="light" onSuccess={(data) => void registerPluggyItem(data)} onError={(error) => { toast.error(error.message || "A Pluggy não conseguiu concluir a conexão."); }} onClose={() => setConnectToken(null)} /></div>}
+    {connectionError && <div className="open-finance-error" role="alert"><strong>Não foi possível concluir a conexão</strong><p>{connectionError}</p><button className="secondary-admin-button" type="button" onClick={() => void openPluggy()} disabled={busyId === "connect"}><Link2 size={15} /> tentar novamente</button></div>}
+    {connectToken && <div className="pluggy-widget-shell"><PluggyConnect connectToken={connectToken} includeSandbox={includeSandbox} connectorIds={connectorIds.length ? connectorIds : undefined} selectedConnectorId={includeSandbox && connectorIds.length === 1 ? connectorIds[0] : undefined} allowFullscreen language="pt" theme="light" onSuccess={(data) => void registerPluggyItem(data)} onError={(error) => handlePluggyError(error.message)} onClose={() => setConnectToken(null)} /></div>}
     {connections.length > 0 && <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><div><strong>{connection.institutionName}</strong><span>{connection.provider} · {connection.statusLabel}</span></div><div className="connection-row-actions"><small>{connection.lastSyncedAt ? `última sincronização ${new Date(connection.lastSyncedAt).toLocaleString("pt-BR")}` : "aguardando sincronização"}</small><button className="icon-action" type="button" aria-label={`Atualizar ${connection.institutionName}`} disabled={busyId === connection.id} onClick={() => void sync(connection)}><RefreshCw size={14} /></button></div></div>)}</div>}
     {transactions.length > 0 && <div className="imported-review"><div className="panel-heading"><div><span className="eyebrow">confira antes de registrar</span><h3>Transações encontradas</h3></div><span className="review-count">{transactions.length}</span></div><div className="imported-transaction-list">{transactions.map((transaction) => <div className="imported-transaction-row" key={transaction.id}><div><strong>{transaction.merchantName || transaction.description}</strong><span>{date(transaction.transactionDate)} · {transaction.direction === "inflow" ? "entrada" : "saída"}</span></div><b className={transaction.direction === "inflow" ? "inflow" : "outflow"}>{transaction.direction === "inflow" ? "+" : "-"}{money(transaction.amount)}</b><div className="imported-transaction-actions"><button className="icon-action" type="button" aria-label="Adicionar transação" disabled={busyId === transaction.id} onClick={() => void review(transaction, "accept")}><Check size={15} /></button><button className="icon-action danger-action" type="button" aria-label="Ignorar transação" disabled={busyId === transaction.id} onClick={() => void review(transaction, "ignore")}><X size={15} /></button></div></div>)}</div></div>}
   </section>;

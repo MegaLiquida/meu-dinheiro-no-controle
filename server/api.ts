@@ -10,7 +10,7 @@ import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
 import { acceptImportedTransaction, ingestImportedTransactions, updateImportedTransactionReview } from "./openfinance";
 import { isPasswordResetEmailConfigured, passwordResetEmailStatus, sendPasswordResetEmail } from "./email";
-import { createPluggyConnectToken, fetchPluggyTransactions, getPluggyItem, isPluggyConfigured, isPluggySandbox, pluggyConnectionStatus, pluggyConsentStatus, pluggyInstitutionName } from "./pluggy";
+import { createPluggyConnectToken, fetchPluggyTransactions, getPluggyItem, getPluggySandboxConnectorIds, isPluggyConfigured, isPluggySandbox, pluggyConnectionStatus, pluggyConsentStatus, pluggyInstitutionName } from "./pluggy";
 
 const router = Router();
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
@@ -770,7 +770,9 @@ router.post("/connections/pluggy/connect-token", requireAuth, asyncRoute(async (
     return;
   }
   const accessToken = await createPluggyConnectToken(request.user!.id);
-  response.json({ accessToken, includeSandbox: isPluggySandbox() });
+  const includeSandbox = isPluggySandbox();
+  const connectorIds = includeSandbox ? await getPluggySandboxConnectorIds() : [];
+  response.json({ accessToken, includeSandbox, connectorIds });
 }));
 
 router.post("/connections/pluggy/item", requireAuth, asyncRoute(async (request, response) => {

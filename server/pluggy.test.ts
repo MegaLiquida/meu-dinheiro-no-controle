@@ -29,6 +29,18 @@ describe("Pluggy sandbox client", () => {
     }));
   });
 
+  it("lists sandbox connector ids so test accounts cannot choose live institutions", async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ apiKey: "api-key-test" }))
+      .mockResolvedValueOnce(response({ results: [{ id: 999, name: "Pluggy Bank" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getPluggySandboxConnectorIds } = await import("./pluggy");
+    await expect(getPluggySandboxConnectorIds()).resolves.toEqual([999]);
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://api.pluggy.ai/connectors?sandbox=true", expect.objectContaining({ headers: expect.objectContaining({ "X-API-KEY": "api-key-test" }) }));
+  });
+
   it("reads all v2 cursor pages and normalizes debit and credit transactions", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ results: [{ id: "account-1", type: "BANK", subtype: "CHECKING_ACCOUNT" }], totalPages: 1 }))
