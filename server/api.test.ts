@@ -87,6 +87,27 @@ describe("API integration contracts", () => {
     expect(mocks.query).toHaveBeenCalledTimes(2);
   });
 
+  it("does not advertise Pluggy as configured without server credentials", async () => {
+    const previousClientId = process.env.PLUGGY_CLIENT_ID;
+    const previousClientSecret = process.env.PLUGGY_CLIENT_SECRET;
+    delete process.env.PLUGGY_CLIENT_ID;
+    delete process.env.PLUGGY_CLIENT_SECRET;
+    mocks.query.mockReset();
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    try {
+      const response = await fetch(`${baseUrl}/api/connections`);
+      const body = await response.json() as { providerConfigured: boolean; providerSelectionRequired: boolean };
+      expect(response.status).toBe(200);
+      expect(body).toEqual(expect.objectContaining({ providerConfigured: false, providerSelectionRequired: true }));
+    } finally {
+      if (previousClientId === undefined) delete process.env.PLUGGY_CLIENT_ID;
+      else process.env.PLUGGY_CLIENT_ID = previousClientId;
+      if (previousClientSecret === undefined) delete process.env.PLUGGY_CLIENT_SECRET;
+      else process.env.PLUGGY_CLIENT_SECRET = previousClientSecret;
+    }
+  });
+
   it("keeps launch lists scoped to the authenticated user", async () => {
     mocks.query.mockReset();
     mocks.query.mockImplementation(async (_sql: unknown, params: unknown[]) => {

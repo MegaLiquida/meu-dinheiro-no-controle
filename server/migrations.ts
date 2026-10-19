@@ -448,6 +448,20 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS password_reset_tokens_expiry_idx ON password_reset_tokens(expires_at);
     `,
   },
+  {
+    name: "009_provider_webhook_events",
+    sql: `
+      CREATE TABLE IF NOT EXISTS provider_webhook_events (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        event TEXT NOT NULL,
+        received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (provider, event_id)
+      );
+      CREATE INDEX IF NOT EXISTS provider_webhook_events_received_idx ON provider_webhook_events(provider, received_at DESC);
+    `,
+  },
 ];
 
 export async function runMigrations(pool: Pool) {

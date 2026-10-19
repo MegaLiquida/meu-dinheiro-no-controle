@@ -22,6 +22,16 @@ services:
         sync: false
       - key: APP_URL
         sync: false
+      - key: OPEN_FINANCE_PROVIDER
+        value: pluggy
+      - key: PLUGGY_CLIENT_ID
+        sync: false
+      - key: PLUGGY_CLIENT_SECRET
+        sync: false
+      - key: PLUGGY_WEBHOOK_SECRET
+        sync: false
+      - key: PLUGGY_INCLUDE_SANDBOX
+        sync: false
       - key: EMAIL_PROVIDER
         value: resend
       - key: EMAIL_FROM

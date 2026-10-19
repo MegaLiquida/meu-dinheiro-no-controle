@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { createSession, destroySession, getUserFromRequest, hashPassword, requireAuth, requireRole, verifyPassword } from "./auth";
@@ -8,8 +8,9 @@ import { buildDashboard, buildReconstructionCenter, buildSimulation, buildSimula
 import { addMonthsKeepingDay, monthRange, splitCents } from "./planning";
 import { launchCsvHash, parseLaunchCsv } from "./csv";
 import recoveryRouter from "./recovery";
-import { acceptImportedTransaction, updateImportedTransactionReview } from "./openfinance";
+import { acceptImportedTransaction, ingestImportedTransactions, updateImportedTransactionReview } from "./openfinance";
 import { isPasswordResetEmailConfigured, passwordResetEmailStatus, sendPasswordResetEmail } from "./email";
+import { createPluggyConnectToken, fetchPluggyTransactions, getPluggyItem, isPluggyConfigured, isPluggySandbox, pluggyConnectionStatus, pluggyConsentStatus, pluggyInstitutionName } from "./pluggy";
 
 const router = Router();
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
@@ -98,6 +99,12 @@ function canRequestPasswordReset(key: string) {
   if (current.count >= 5) return false;
   current.count += 1;
   return true;
+}
+
+function secretsMatch(actual: string, expected: string) {
+  const actualHash = createHash("sha256").update(actual).digest();
+  const expectedHash = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(actualHash, expectedHash);
 }
 
 function money(amountCents: number) {
@@ -251,6 +258,80 @@ async function recordAudit(actorUserId: string | null, targetUserId: string | nu
   );
 }
 
+async function syncPluggyConnection(userId: string, connectionId: string, itemId: string) {
+  const item = await getPluggyItem(itemId);
+  const { transactions } = await fetchPluggyTransactions(itemId);
+  const status = pluggyConnectionStatus(item);
+  const consentStatus = pluggyConsentStatus(item);
+  const result = await withTransaction(async (client) => {
+    const connection = await client.query("SELECT id FROM financial_connections WHERE id = $1 AND user_id = $2 AND provider = 'pluggy' FOR UPDATE", [connectionId, userId]);
+    if (!connection.rowCount) throw new Error("Conexão Pluggy não encontrada para este usuário.");
+    const ingest = await ingestImportedTransactions(client, { userId, connectionId, transactions });
+    await client.query(
+      `UPDATE financial_connections
+          SET institution_name = $3, status = $4, consent_status = $5, consent_expires_at = $6,
+              last_synced_at = NOW(), error_message = NULL, updated_at = NOW()
+        WHERE id = $1 AND user_id = $2`,
+      [connectionId, userId, pluggyInstitutionName(item), status === "pending" ? "pending" : "active", consentStatus, item.consentExpiresAt ?? null],
+    );
+    return ingest;
+  });
+  await recordAudit(userId, userId, "open_finance_pluggy_synced", { connectionId, itemId, created: result.created, updated: result.updated });
+  return result;
+}
+
+type PluggyWebhookPayload = {
+  event?: string;
+  eventId?: string;
+  itemId?: string;
+  accountId?: string;
+  transactionIds?: string[];
+  error?: { code?: string; message?: string };
+};
+
+async function processPluggyWebhook(payload: PluggyWebhookPayload) {
+  const itemId = typeof payload.itemId === "string" ? payload.itemId : null;
+  if (!itemId || !payload.event) return;
+  const connectionResult = await getDb().query<{ id: string; user_id: string }>(
+    "SELECT id, user_id FROM financial_connections WHERE provider = 'pluggy' AND provider_item_id = $1",
+    [itemId],
+  );
+  const connection = connectionResult.rows[0];
+  if (!connection) return;
+  if (payload.eventId) {
+    const eventResult = await getDb().query(
+      `INSERT INTO provider_webhook_events (id, provider, event_id, event, received_at)
+       VALUES ($1, 'pluggy', $2, $3, NOW())
+       ON CONFLICT (provider, event_id) DO NOTHING
+       RETURNING id`,
+      [randomUUID(), payload.eventId, payload.event],
+    );
+    if (!eventResult.rowCount) return;
+  }
+
+  if (payload.event === "item/deleted") {
+    await getDb().query("UPDATE financial_connections SET status = 'revoked', consent_status = 'revoked', updated_at = NOW() WHERE id = $1 AND user_id = $2", [connection.id, connection.user_id]);
+    await recordAudit(null, connection.user_id, "open_finance_pluggy_revoked", { connectionId: connection.id, itemId });
+    return;
+  }
+  if (payload.event === "item/error") {
+    const detail = payload.error?.message || payload.error?.code || "A instituição informou um erro na conexão.";
+    await getDb().query("UPDATE financial_connections SET status = 'error', error_message = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2", [connection.id, connection.user_id, detail.slice(0, 500)]);
+    return;
+  }
+  if (["item/created", "item/updated", "transactions/created", "transactions/updated"].includes(payload.event)) {
+    await syncPluggyConnection(connection.user_id, connection.id, itemId);
+  }
+  if (payload.event === "transactions/deleted" && payload.transactionIds?.length) {
+    await getDb().query(
+      `UPDATE imported_transactions
+          SET provider_status = 'DELETED', state = CASE WHEN financial_launch_id IS NULL THEN 'reversed' ELSE state END, updated_at = NOW()
+        WHERE connection_id = $1 AND user_id = $2 AND external_transaction_id = ANY($3::text[])`,
+      [connection.id, connection.user_id, payload.transactionIds],
+    );
+  }
+}
+
 async function generateRecurringLaunches(client: PoolClient, userId: string, recurringId: string) {
   const source = await client.query("SELECT kind, name, amount_cents, due_day, start_date, category FROM recurring_commitments WHERE id = $1 AND user_id = $2 AND active = TRUE", [recurringId, userId]);
   if (!source.rowCount) return;
@@ -314,7 +395,7 @@ router.get("/health", asyncRoute(async (_request, response) => {
     return;
   }
   await getDb().query("SELECT 1");
-  response.json({ ok: true, database: "connected", passwordResetEmail: passwordResetEmailStatus() });
+  response.json({ ok: true, database: "connected", passwordResetEmail: passwordResetEmailStatus(), openFinance: { provider: "pluggy", configured: isPluggyConfigured(), sandbox: isPluggySandbox() } });
 }));
 
 router.post("/auth/register", asyncRoute(async (request, response) => {
@@ -680,8 +761,72 @@ router.patch("/notifications/:id/read", requireAuth, asyncRoute(async (request, 
 
 router.get("/connections", requireAuth, asyncRoute(async (request, response) => {
   const result = await getDb().query("SELECT id, provider, institution_name, account_label, status, consent_status, last_synced_at, consent_expires_at, error_message, created_at, updated_at FROM financial_connections WHERE user_id=$1 ORDER BY updated_at DESC", [request.user!.id]);
-  response.json({ providerConfigured: false, providerSelectionRequired: true, connections: result.rows.map(serializeFinancialConnection) });
+  response.json({ providerConfigured: isPluggyConfigured(), providerSelectionRequired: !isPluggyConfigured(), sandbox: isPluggySandbox(), connections: result.rows.map(serializeFinancialConnection) });
 }));
+
+router.post("/connections/pluggy/connect-token", requireAuth, asyncRoute(async (request, response) => {
+  if (!isPluggyConfigured()) {
+    response.status(503).json({ message: "A conexão Pluggy ainda não está configurada no servidor." });
+    return;
+  }
+  const accessToken = await createPluggyConnectToken(request.user!.id);
+  response.json({ accessToken, includeSandbox: isPluggySandbox() });
+}));
+
+router.post("/connections/pluggy/item", requireAuth, asyncRoute(async (request, response) => {
+  const parsed = z.object({ itemId: z.string().uuid() }).safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Identificador da conexão Pluggy inválido." });
+    return;
+  }
+  if (!isPluggyConfigured()) {
+    response.status(503).json({ message: "A conexão Pluggy ainda não está configurada no servidor." });
+    return;
+  }
+  const item = await getPluggyItem(parsed.data.itemId);
+  const status = pluggyConnectionStatus(item);
+  const consentStatus = pluggyConsentStatus(item);
+  const connection = await getDb().query(
+    `INSERT INTO financial_connections (id, user_id, provider, provider_item_id, institution_name, status, consent_status, consent_expires_at)
+     VALUES ($1, $2, 'pluggy', $3, $4, $5, $6, $7)
+     ON CONFLICT (user_id, provider, provider_item_id) DO UPDATE SET institution_name = EXCLUDED.institution_name, status = EXCLUDED.status, consent_status = EXCLUDED.consent_status, consent_expires_at = EXCLUDED.consent_expires_at, error_message = NULL, updated_at = NOW()
+     RETURNING id, provider, institution_name, account_label, status, consent_status, last_synced_at, consent_expires_at, error_message, created_at, updated_at`,
+    [randomUUID(), request.user!.id, item.id, pluggyInstitutionName(item), status, consentStatus, item.consentExpiresAt ?? null],
+  );
+  try {
+    await syncPluggyConnection(request.user!.id, connection.rows[0].id, item.id);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Não foi possível sincronizar a conexão Pluggy.";
+    await getDb().query("UPDATE financial_connections SET status = 'error', error_message = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2", [connection.rows[0].id, request.user!.id, detail.slice(0, 500)]);
+    response.status(502).json({ message: "A conta foi conectada, mas a primeira sincronização falhou. Tente atualizar novamente." });
+    return;
+  }
+  await recordAudit(request.user!.id, request.user!.id, "open_finance_pluggy_connected", { connectionId: connection.rows[0].id, itemId: item.id });
+  const refreshed = await getDb().query("SELECT id, provider, institution_name, account_label, status, consent_status, last_synced_at, consent_expires_at, error_message, created_at, updated_at FROM financial_connections WHERE id = $1 AND user_id = $2", [connection.rows[0].id, request.user!.id]);
+  response.status(201).json({ connection: serializeFinancialConnection(refreshed.rows[0]) });
+}));
+
+router.post("/connections/:id/sync", requireAuth, asyncRoute(async (request, response) => {
+  const connection = await getDb().query<{ id: string; user_id: string; provider_item_id: string }>("SELECT id, user_id, provider_item_id FROM financial_connections WHERE id = $1 AND user_id = $2 AND provider = 'pluggy'", [request.params.id, request.user!.id]);
+  if (!connection.rowCount) {
+    response.status(404).json({ message: "Conexão financeira não encontrada." });
+    return;
+  }
+  const result = await syncPluggyConnection(request.user!.id, connection.rows[0].id, connection.rows[0].provider_item_id);
+  response.json({ synced: true, created: result.created, updated: result.updated });
+}));
+
+router.post("/webhooks/pluggy/:secret", (request, response) => {
+  const expected = process.env.PLUGGY_WEBHOOK_SECRET?.trim();
+  if (!expected || !secretsMatch(request.params.secret, expected)) {
+    response.status(404).end();
+    return;
+  }
+  response.status(204).end();
+  void processPluggyWebhook(request.body as PluggyWebhookPayload).catch((error) => {
+    console.error("Pluggy webhook processing failed", error instanceof Error ? error.message : String(error));
+  });
+});
 
 router.get("/imported-transactions", requireAuth, asyncRoute(async (request, response) => {
   const state = typeof request.query.state === "string" && ["pending", "accepted", "ignored", "reversed"].includes(request.query.state) ? request.query.state : null;

@@ -138,6 +138,7 @@ A API estará disponível no mesmo host do frontend:
 - `GET/POST/PATCH /api/goals`
 - `GET/PATCH /api/notifications`
 - `GET /api/connections` e `GET /api/imported-transactions`
+- `POST /api/connections/pluggy/connect-token`, `POST /api/connections/pluggy/item` e `POST /api/connections/:id/sync`
 - `POST /api/imported-transactions/:id/accept` e `PATCH /api/imported-transactions/:id/review`
 - `POST /api/auth/change-password`
 - `GET /api/export`, `POST /api/import/csv/preview` e `POST /api/import/csv`
@@ -162,12 +163,15 @@ O arquivo `render.yaml` foi preparado para o serviço web na branch `projeto`.
    - `EMAIL_PROVIDER`: use `resend` em produção.
    - `EMAIL_FROM`: remetente verificado no Resend, por exemplo `Meu Dinheiro no Controle <noreply@seudominio.com>`.
    - `RESEND_API_KEY`: chave do Resend, somente como segredo do Render.
+   - `OPEN_FINANCE_PROVIDER`: `pluggy` nesta primeira fase.
+   - `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET`: credenciais do Dashboard Pluggy, somente como secrets do Render.
+   - `PLUGGY_WEBHOOK_SECRET`: segredo aleatório usado para proteger o endpoint de webhook; somente como secret do Render.
 4. Faça o deploy pelo Blueprint ou sincronize o `render.yaml`.
 5. Verifique `https://SEU_SERVICO.onrender.com/api/health`. A resposta deve indicar `database: "connected"` e `passwordResetEmail: "configured"`.
 
-O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, despesas essenciais, negociações, planos de recuperação, pagamentos, revisões, ações, limites, metas, importações e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
+O Blueprint executa o bundle `dist/migrate.js` antes de iniciar o serviço. As migrações versionadas criam as tabelas, índices e restrições de perfis, planejamento, compras, dívidas, despesas essenciais, negociações, planos de recuperação, pagamentos, revisões, ações, limites, metas, importações, conexões financeiras, webhooks e notificações. O processo também cria o primeiro proprietário quando `ADMIN_EMAIL` e `ADMIN_PASSWORD` ainda não existem na base.
 
-A URL do banco deve ser configurada apenas no Render ou em um `.env` ignorado localmente. Nunca coloque credenciais no GitHub, no frontend, no README ou em logs.
+A URL do banco e as credenciais Pluggy devem ser configuradas apenas no Render ou em um `.env` ignorado localmente. Nunca coloque credenciais no GitHub, no frontend, no README ou em logs.
 
 ## Segurança e limites atuais
 
@@ -175,7 +179,7 @@ O backend deriva `user_id` da sessão autenticada e aplica esse filtro em todas 
 
 A sessão usa cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Senhas são armazenadas somente como hashes bcrypt. Os valores financeiros são persistidos em centavos no PostgreSQL e convertidos para reais apenas na API.
 
-O produto já inclui troca de senha autenticada, recuperação de senha por e-mail com token único, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados, notificações internas e a fundação de ingestão Open Finance. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. A fundação Open Finance não ativa nenhum banco automaticamente: o provedor ainda precisa ser escolhido, contratado e configurado com consentimento, URLs de retorno e segredos exclusivamente no Render. O sistema não armazena senhas bancárias; transações externas entram como pendentes e só viram lançamentos após revisão do usuário. Convites com envio de e-mail e Row-Level Security do PostgreSQL ainda devem ser ativados antes de uma operação pública em escala.
+O produto já inclui troca de senha autenticada, recuperação de senha por e-mail com token único, exportação JSON completa, importação CSV idempotente, categorias livres, recorrência automática, pagamentos de dívidas auditados, notificações internas e a fundação de ingestão Open Finance. A primeira integração Pluggy usa Connect Token de curta duração no frontend, API v2 de transações com paginação por cursor e webhook idempotente; transações externas entram como pendentes e só viram lançamentos após revisão do usuário. O sistema não armazena senhas bancárias. A capacidade segura é uma métrica operacional conservadora e **não representa mínimo existencial legal nem aconselhamento jurídico**. Convites com envio de e-mail e Row-Level Security do PostgreSQL ainda devem ser ativados antes de uma operação pública em escala.
 
 ## Validação
 
