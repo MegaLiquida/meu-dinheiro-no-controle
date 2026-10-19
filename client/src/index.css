@@ -25,6 +25,8 @@
 }
 
 * { box-sizing: border-box; }
+body.bank-connection-open { overflow: hidden; }
+body.bank-connection-open .mobile-bottom-nav { display: none; }
 html { min-width: 320px; background: var(--paper); }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--paper); }
 button, input, select, textarea { font: inherit; }
